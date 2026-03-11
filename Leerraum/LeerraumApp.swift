@@ -26,6 +26,8 @@ struct LeerraumApp: App {
             QuoteMessage.self,
             BodyMeasurementEntry.self,
             RecommendationEntry.self,
+            NoteCategory.self,
+            NoteEntry.self,
             AppIdeaNote.self,
             LifeGoal.self
         ])

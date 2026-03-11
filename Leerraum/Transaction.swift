@@ -838,3 +838,64 @@ final class RecommendationEntry {
         set { kindRaw = newValue.rawValue }
     }
 }
+
+@Model
+final class NoteCategory {
+    @Attribute(.unique) var id: UUID
+    var name: String
+    var icon: String
+    var red: Double
+    var green: Double
+    var blue: Double
+    var createdAt: Date
+
+    @Relationship(deleteRule: .nullify, inverse: \NoteEntry.category)
+    var notes: [NoteEntry]
+
+    init(
+        name: String,
+        icon: String,
+        red: Double,
+        green: Double,
+        blue: Double,
+        createdAt: Date = .now
+    ) {
+        self.id = UUID()
+        self.name = name
+        self.icon = icon
+        self.red = max(0, min(red, 1))
+        self.green = max(0, min(green, 1))
+        self.blue = max(0, min(blue, 1))
+        self.createdAt = createdAt
+        self.notes = []
+    }
+
+    var tint: Color {
+        Color(red: red, green: green, blue: blue)
+    }
+}
+
+@Model
+final class NoteEntry {
+    @Attribute(.unique) var id: UUID
+    var title: String
+    var detail: String
+    var createdAt: Date
+    var updatedAt: Date
+    var category: NoteCategory?
+
+    init(
+        title: String,
+        detail: String,
+        category: NoteCategory?,
+        createdAt: Date = .now,
+        updatedAt: Date = .now
+    ) {
+        self.id = UUID()
+        self.title = title
+        self.detail = detail
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.category = category
+    }
+}

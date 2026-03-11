@@ -38,6 +38,11 @@ struct FeatureGradientPalette {
         light: [AppPalette.Recommendations.c50, AppPalette.Recommendations.c100, AppPalette.Recommendations.c200],
         dark: [AppPalette.Recommendations.c950, AppPalette.Recommendations.c900, AppPalette.Recommendations.c800]
     )
+
+    static let notes = FeatureGradientPalette(
+        light: [AppPalette.Notes.c50, AppPalette.Notes.c100, AppPalette.Notes.c200],
+        dark: [AppPalette.Notes.c950, AppPalette.Notes.c900, AppPalette.Notes.c800]
+    )
 }
 
 struct FeatureGradientBackground: View {

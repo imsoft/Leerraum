@@ -112,6 +112,20 @@ enum AppPalette {
         static let c900 = Color(hex: "#35530E")
         static let c950 = Color(hex: "#192E03")
     }
+
+    enum Notes {
+        static let c50 = Color(hex: "#FEFCE8")
+        static let c100 = Color(hex: "#FEF9C3")
+        static let c200 = Color(hex: "#FEF08A")
+        static let c300 = Color(hex: "#FDE047")
+        static let c400 = Color(hex: "#FACC15")
+        static let c500 = Color(hex: "#EAB308")
+        static let c600 = Color(hex: "#CA8A04")
+        static let c700 = Color(hex: "#A16207")
+        static let c800 = Color(hex: "#854D0E")
+        static let c900 = Color(hex: "#713F12")
+        static let c950 = Color(hex: "#422006")
+    }
 }
 
 extension Color {

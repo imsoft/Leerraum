@@ -70,9 +70,20 @@ struct ContentView: View {
     @State private var showingFixedTransactionSheet = false
     @State private var fixedTransactionEditing: FixedTransaction?
     @StateObject private var dashboardViewModel = FinanceDashboardViewModel()
+    @StateObject private var exchangeRateViewModel = USDMXNExchangeRateViewModel()
+    @AppStorage(AppStorageKey.exchangeRateProvider) private var exchangeProviderRawValue = ExchangeRateProviderPreference.automatic.rawValue
+    @AppStorage(AppStorageKey.banxicoToken) private var banxicoToken = ""
     @State private var dashboardRefreshTask: Task<Void, Never>?
-    private let usdToMxnRate = 17.0
+    private var usdToMxnRate: Double { exchangeRateViewModel.effectiveRate }
     private let financeBaseCurrencyCode = "MXN"
+
+    private var selectedExchangeProvider: ExchangeRateProviderPreference {
+        ExchangeRateProviderPreference(rawValue: exchangeProviderRawValue) ?? .automatic
+    }
+
+    private var hasBanxicoToken: Bool {
+        !banxicoToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     private var dashboardSnapshot: FinanceDashboardSnapshot {
         dashboardViewModel.snapshot
@@ -194,6 +205,15 @@ struct ContentView: View {
         hasher.combine(budgets.count)
         hasher.combine(selectedFilter)
         hasher.combine(selectedReportRange)
+        hasher.combine(Int((usdToMxnRate * 10_000).rounded()))
+        return hasher.finalize()
+    }
+
+    private var exchangeRateRefreshSignature: Int {
+        var hasher = Hasher()
+        hasher.combine(Int((usdToMxnRate * 1_000_000).rounded()))
+        hasher.combine(exchangeRateViewModel.sourceName)
+        hasher.combine(exchangeRateViewModel.lastUpdated?.timeIntervalSince1970 ?? 0)
         return hasher.finalize()
     }
 
@@ -241,6 +261,21 @@ struct ContentView: View {
         )
     }
 
+    private var exchangeRateSection: some View {
+        ExchangeRateStatusCard(
+            rate: usdToMxnRate,
+            lastUpdated: exchangeRateViewModel.lastUpdated,
+            sourceName: exchangeRateViewModel.sourceName,
+            isLoading: exchangeRateViewModel.isLoading,
+            errorMessage: exchangeRateViewModel.errorMessage,
+            providerPreference: selectedExchangeProvider,
+            hasBanxicoToken: hasBanxicoToken,
+            onRefreshTap: {
+                exchangeRateViewModel.refresh(force: true)
+            }
+        )
+    }
+
     private var financeScrollContent: some View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 18) {
@@ -251,6 +286,8 @@ struct ContentView: View {
                     baseCurrencyCode: financeBaseCurrencyCode,
                     usdToMxnRate: usdToMxnRate
                 )
+
+                exchangeRateSection
 
                 if !accounts.isEmpty {
                     AccountsOverview(
@@ -450,14 +487,25 @@ struct ContentView: View {
         view
             .onAppear {
                 DefaultAccountSeeder.ensureDefaultAccountsIfNeeded(in: modelContext)
+                exchangeRateViewModel.refreshIfNeeded()
                 scheduleDashboardRefresh(immediate: true)
             }
             .onChange(of: dashboardRefreshSignature) { _, _ in
                 scheduleDashboardRefresh()
             }
+            .onChange(of: exchangeRateRefreshSignature) { _, _ in
+                scheduleDashboardRefresh(immediate: true)
+            }
+            .onChange(of: exchangeProviderRawValue) { _, _ in
+                exchangeRateViewModel.refresh(force: true)
+            }
+            .onChange(of: banxicoToken) { _, _ in
+                exchangeRateViewModel.refresh(force: true)
+            }
             .onDisappear {
                 dashboardRefreshTask?.cancel()
                 dashboardRefreshTask = nil
+                exchangeRateViewModel.cancelRefresh()
             }
     }
 
@@ -642,7 +690,7 @@ private struct BalanceCard: View {
                 .font(.system(size: 40, weight: .bold, design: .rounded))
                 .foregroundStyle(.white)
 
-            Text("Incluye conversion USD -> MXN (1 USD = \(usdToMxnRate.formatted(.number.precision(.fractionLength(2)))) MXN)")
+            Text("Incluye conversion USD -> MXN (1 USD = \(usdToMxnRate.formatted(.number.precision(.fractionLength(4)))) MXN)")
                 .font(.caption2.weight(.medium))
                 .foregroundStyle(ReadablePalette.onDarkSecondaryText)
 
@@ -673,6 +721,182 @@ private struct BalanceCard: View {
             in: RoundedRectangle(cornerRadius: 26, style: .continuous)
         )
         .shadow(color: shadowColor, radius: 14, x: 0, y: 10)
+    }
+}
+
+private struct ExchangeRateStatusCard: View {
+    let rate: Double
+    let lastUpdated: Date?
+    let sourceName: String
+    let isLoading: Bool
+    let errorMessage: String?
+    let providerPreference: ExchangeRateProviderPreference
+    let hasBanxicoToken: Bool
+    let onRefreshTap: () -> Void
+
+    private struct StatusBadge {
+        let text: String
+        let foreground: Color
+        let background: Color
+    }
+
+    private var lastUpdatedText: String {
+        guard let lastUpdated else { return "Sin actualizar" }
+        return lastUpdated.formatted(
+            .dateTime
+                .locale(Locale(identifier: "es_MX"))
+                .day()
+                .month(.abbreviated)
+                .hour()
+                .minute()
+        )
+    }
+
+    private var displaySourceName: String {
+        switch sourceName {
+        case "banxico":
+            return "Banxico"
+        case "open.er-api":
+            return "OpenERAPI"
+        case "frankfurter":
+            return "Frankfurter"
+        default:
+            return sourceName
+        }
+    }
+
+    private var banxicoStatusBadge: StatusBadge? {
+        switch providerPreference {
+        case .banxico:
+            if isLoading {
+                return StatusBadge(
+                    text: "Validando Banxico...",
+                    foreground: AppPalette.Finance.c800,
+                    background: AppPalette.Finance.c100
+                )
+            }
+            if !hasBanxicoToken {
+                return StatusBadge(
+                    text: "Falta token Banxico",
+                    foreground: Color(red: 0.73, green: 0.42, blue: 0.09),
+                    background: Color(red: 1.0, green: 0.95, blue: 0.83)
+                )
+            }
+            if sourceName == "banxico" && errorMessage == nil {
+                return StatusBadge(
+                    text: "Banxico conectado",
+                    foreground: Color(red: 0.06, green: 0.55, blue: 0.27),
+                    background: Color(red: 0.88, green: 0.98, blue: 0.91)
+                )
+            }
+            if let errorMessage, errorMessage.localizedCaseInsensitiveContains("token") {
+                return StatusBadge(
+                    text: "Token Banxico invalido",
+                    foreground: Color.financeExpenseAccent,
+                    background: Color(red: 1.0, green: 0.90, blue: 0.90)
+                )
+            }
+            return StatusBadge(
+                text: "Banxico no disponible",
+                foreground: Color(red: 0.73, green: 0.42, blue: 0.09),
+                background: Color(red: 1.0, green: 0.95, blue: 0.83)
+            )
+
+        case .automatic:
+            if sourceName == "banxico" && errorMessage == nil {
+                return StatusBadge(
+                    text: "Banxico conectado",
+                    foreground: Color(red: 0.06, green: 0.55, blue: 0.27),
+                    background: Color(red: 0.88, green: 0.98, blue: 0.91)
+                )
+            }
+            if hasBanxicoToken && sourceName != "banxico" {
+                return StatusBadge(
+                    text: "Banxico no disponible (respaldo activo)",
+                    foreground: Color(red: 0.73, green: 0.42, blue: 0.09),
+                    background: Color(red: 1.0, green: 0.95, blue: 0.83)
+                )
+            }
+            return nil
+
+        case .openERAPI, .frankfurter:
+            return nil
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center) {
+                Label("Tipo de cambio", systemImage: "dollarsign.circle")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.appTextPrimary)
+                    .fontDesign(.rounded)
+
+                Spacer()
+
+                Button(action: onRefreshTap) {
+                    HStack(spacing: 6) {
+                        if isLoading {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                        Text(isLoading ? "Actualizando" : "Actualizar")
+                            .font(.caption.weight(.semibold))
+                            .fontDesign(.rounded)
+                    }
+                }
+                .buttonStyle(.bordered)
+                .tint(AppPalette.Finance.c700)
+                .disabled(isLoading)
+            }
+
+            Text("1 USD = \(rate.formatted(.number.precision(.fractionLength(4)))) MXN")
+                .font(.title3.weight(.bold))
+                .fontDesign(.rounded)
+                .foregroundStyle(Color.appTextPrimary)
+
+            if let badge = banxicoStatusBadge {
+                Text(badge.text)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(badge.foreground)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(badge.background, in: Capsule())
+            }
+
+            HStack(spacing: 8) {
+                Text("Actualizado: \(lastUpdatedText)")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(Color.appTextSecondary)
+
+                Spacer(minLength: 8)
+
+                Text(displaySourceName)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(AppPalette.Finance.c800)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(AppPalette.Finance.c100.opacity(0.85), in: Capsule())
+            }
+
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundStyle(Color.financeExpenseAccent)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            ReadablePalette.cardBackground,
+            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.appStrokeSoft, lineWidth: 1)
+        )
     }
 }
 

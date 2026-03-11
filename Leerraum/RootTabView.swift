@@ -26,6 +26,7 @@ private enum RootTab: Hashable {
 }
 
 private enum MoreDestination: String, CaseIterable, Identifiable {
+    case notes
     case bodyMeasurements
     case recommendations
     case appIdeas
@@ -36,6 +37,8 @@ private enum MoreDestination: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
+        case .notes:
+            return "Notas"
         case .bodyMeasurements:
             return "Medidas corporales"
         case .recommendations:
@@ -51,6 +54,8 @@ private enum MoreDestination: String, CaseIterable, Identifiable {
 
     var subtitle: String {
         switch self {
+        case .notes:
+            return "Guarda notas por categoria y color."
         case .bodyMeasurements:
             return "Registra peso y progreso en el tiempo."
         case .recommendations:
@@ -66,6 +71,8 @@ private enum MoreDestination: String, CaseIterable, Identifiable {
 
     var icon: String {
         switch self {
+        case .notes:
+            return "note.text"
         case .bodyMeasurements:
             return "ruler"
         case .recommendations:
@@ -81,6 +88,8 @@ private enum MoreDestination: String, CaseIterable, Identifiable {
 
     var tint: Color {
         switch self {
+        case .notes:
+            return AppPalette.Notes.c700
         case .bodyMeasurements:
             return AppPalette.Body.c700
         case .recommendations:
@@ -311,6 +320,8 @@ private struct MoreHubView: View {
     @ViewBuilder
     private func destinationView(for destination: MoreDestination) -> some View {
         switch destination {
+        case .notes:
+            NotesView()
         case .bodyMeasurements:
             BodyMeasurementsView()
         case .recommendations:
@@ -374,6 +385,12 @@ private struct MoreDestinationCard: View {
 
 private struct AppearanceSettingsView: View {
     @Binding var themeMode: AppThemeMode
+    @AppStorage(AppStorageKey.exchangeRateProvider) private var exchangeProviderRawValue = ExchangeRateProviderPreference.automatic.rawValue
+    @AppStorage(AppStorageKey.banxicoToken) private var banxicoToken = ""
+
+    private var selectedProvider: ExchangeRateProviderPreference {
+        ExchangeRateProviderPreference(rawValue: exchangeProviderRawValue) ?? .automatic
+    }
 
     var body: some View {
         NavigationStack {
@@ -387,6 +404,28 @@ private struct AppearanceSettingsView: View {
                         Text("Sistema usa la configuracion de tu iPhone.")
                             .font(.caption)
                             .foregroundStyle(Color.appTextSecondary)
+                    }
+
+                    Section("Tipo de cambio USD/MXN") {
+                        Picker("Proveedor", selection: $exchangeProviderRawValue) {
+                            ForEach(ExchangeRateProviderPreference.allCases) { provider in
+                                Text(provider.title).tag(provider.rawValue)
+                            }
+                        }
+
+                        Text(selectedProvider.subtitle)
+                            .font(.caption)
+                            .foregroundStyle(Color.appTextSecondary)
+
+                        if selectedProvider == .banxico || selectedProvider == .automatic {
+                            SecureField("Token Banxico (SIE)", text: $banxicoToken)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+
+                            Text("Si pones token, Automatico prioriza Banxico.")
+                                .font(.caption2)
+                                .foregroundStyle(Color.appTextSecondary)
+                        }
                     }
                 }
                 .contentMargins(.top, 4, for: .scrollContent)
