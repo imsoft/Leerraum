@@ -6,6 +6,10 @@ import OSLog
 
 @main
 struct LeerraumApp: App {
+    init() {
+        AppNotificationService.shared.configure()
+    }
+
     var body: some Scene {
         WindowGroup {
             RootTabView()
@@ -270,9 +274,9 @@ final class AppNotificationService: NSObject, UNUserNotificationCenterDelegate {
             )
 
             let content = UNMutableNotificationContent()
-            content.title = quoteNotificationTitle(from: quote.text)
-            content.subtitle = "Autor: \(quoteNotificationAuthor(from: quote.author))"
-            content.body = quoteNotificationTitle(from: quote.text)
+            content.title = "Leerraum"
+            content.subtitle = quoteNotificationMessage(from: quote.text)
+            content.body = "Por \(quoteNotificationAuthor(from: quote.author))"
             content.sound = UNNotificationSound(named: customSoundName)
             content.userInfo = [
                 quoteUserInfoTypeKey: quoteUserInfoTypeValue,
@@ -313,7 +317,7 @@ final class AppNotificationService: NSObject, UNUserNotificationCenterDelegate {
             }
     }
 
-    private func quoteNotificationTitle(from text: String) -> String {
+    private func quoteNotificationMessage(from text: String) -> String {
         let normalized = text
             .replacingOccurrences(of: "\n", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
