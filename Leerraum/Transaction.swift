@@ -701,6 +701,80 @@ final class QuoteMessage {
 }
 
 @Model
+final class Habit {
+    @Attribute(.unique) var id: UUID
+    var title: String
+    var note: String
+    var reminderHour: Int
+    var reminderMinute: Int
+    var isActive: Bool
+    var createdAt: Date
+
+    @Relationship(deleteRule: .cascade, inverse: \HabitEntry.habit)
+    var entries: [HabitEntry]
+
+    init(
+        title: String,
+        note: String = "",
+        reminderHour: Int = 21,
+        reminderMinute: Int = 0,
+        isActive: Bool = true,
+        createdAt: Date = .now
+    ) {
+        self.id = UUID()
+        self.title = title
+        self.note = note
+        self.reminderHour = max(0, min(reminderHour, 23))
+        self.reminderMinute = max(0, min(reminderMinute, 59))
+        self.isActive = isActive
+        self.createdAt = createdAt
+        self.entries = []
+    }
+
+    var reminderDate: Date {
+        get {
+            let calendar = Calendar.current
+            let now = Date()
+            let components = DateComponents(
+                year: calendar.component(.year, from: now),
+                month: calendar.component(.month, from: now),
+                day: calendar.component(.day, from: now),
+                hour: reminderHour,
+                minute: reminderMinute
+            )
+            return calendar.date(from: components) ?? now
+        }
+        set {
+            let components = Calendar.current.dateComponents([.hour, .minute], from: newValue)
+            reminderHour = max(0, min(components.hour ?? 21, 23))
+            reminderMinute = max(0, min(components.minute ?? 0, 59))
+        }
+    }
+}
+
+@Model
+final class HabitEntry {
+    @Attribute(.unique) var id: UUID
+    var date: Date
+    var didComplete: Bool
+    var createdAt: Date
+    var habit: Habit?
+
+    init(
+        date: Date = .now,
+        didComplete: Bool,
+        habit: Habit? = nil,
+        createdAt: Date = .now
+    ) {
+        self.id = UUID()
+        self.date = Calendar.current.startOfDay(for: date)
+        self.didComplete = didComplete
+        self.habit = habit
+        self.createdAt = createdAt
+    }
+}
+
+@Model
 final class BodyMeasurementEntry {
     @Attribute(.unique) var id: UUID
     var date: Date

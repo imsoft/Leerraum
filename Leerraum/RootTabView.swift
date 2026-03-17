@@ -26,6 +26,7 @@ private enum RootTab: Hashable {
 }
 
 private enum MoreDestination: String, CaseIterable, Identifiable {
+    case habits
     case notes
     case bodyMeasurements
     case recommendations
@@ -37,6 +38,8 @@ private enum MoreDestination: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
+        case .habits:
+            return "Habitos"
         case .notes:
             return "Notas"
         case .bodyMeasurements:
@@ -54,6 +57,8 @@ private enum MoreDestination: String, CaseIterable, Identifiable {
 
     var subtitle: String {
         switch self {
+        case .habits:
+            return "Crea habitos y registra tu avance diario."
         case .notes:
             return "Guarda notas por categoria y color."
         case .bodyMeasurements:
@@ -71,6 +76,8 @@ private enum MoreDestination: String, CaseIterable, Identifiable {
 
     var icon: String {
         switch self {
+        case .habits:
+            return "checklist"
         case .notes:
             return "note.text"
         case .bodyMeasurements:
@@ -88,6 +95,8 @@ private enum MoreDestination: String, CaseIterable, Identifiable {
 
     var tint: Color {
         switch self {
+        case .habits:
+            return AppPalette.Habits.c700
         case .notes:
             return AppPalette.Notes.c700
         case .bodyMeasurements:
@@ -108,9 +117,13 @@ private enum MoreDestination: String, CaseIterable, Identifiable {
 struct RootTabView: View {
     @State private var selectedTab: RootTab = .finance
     @State private var deepLinkedQuoteID: UUID?
+    @State private var selectedMoreDestination: MoreDestination?
+    @State private var habitSchedulingTask: Task<Void, Never>?
     @State private var quoteSchedulingTask: Task<Void, Never>?
+    @State private var lastHabitSchedulingSignature: Int?
     @State private var lastQuoteSchedulingSignature: Int?
     @Environment(\.scenePhase) private var scenePhase
+    @Query(sort: \Habit.createdAt, order: .reverse) private var habits: [Habit]
     @Query(sort: \QuoteMessage.createdAt, order: .reverse) private var quotes: [QuoteMessage]
     @AppStorage(AppStorageKey.themeMode) private var themeModeRawValue = AppThemeMode.system.rawValue
 
@@ -151,6 +164,18 @@ struct RootTabView: View {
         return hasher.finalize()
     }
 
+    private var habitNotificationSignature: Int {
+        var hasher = Hasher()
+        for habit in habits {
+            hasher.combine(habit.id)
+            hasher.combine(habit.title)
+            hasher.combine(habit.isActive)
+            hasher.combine(habit.reminderHour)
+            hasher.combine(habit.reminderMinute)
+        }
+        return hasher.finalize()
+    }
+
     var body: some View {
         TabView(selection: $selectedTab) {
             ContentView()
@@ -177,7 +202,10 @@ struct RootTabView: View {
                 }
                 .tag(RootTab.quotes)
 
-            MoreHubView(themeMode: selectedThemeModeBinding)
+            MoreHubView(
+                themeMode: selectedThemeModeBinding,
+                selectedDestination: $selectedMoreDestination
+            )
                 .tabItem {
                     Label("Más", systemImage: "square.grid.2x2")
                 }
@@ -192,8 +220,10 @@ struct RootTabView: View {
             defer { Observability.appSignposter.endInterval("rootTab.onAppear", interval) }
             AppNotificationService.shared.requestAuthorizationIfNeeded()
             AppNotificationService.shared.scheduleMonthlyFinanceReviewReminders()
+            scheduleHabitRemindersIfNeeded(force: true)
             scheduleQuoteRemindersIfNeeded(force: true)
             openPendingQuoteIfNeeded()
+            openPendingHabitsIfNeeded()
             Observability.debug(Observability.appLogger, "RootTabView did appear.")
         }
         .onChange(of: scenePhase) { _, newPhase in
@@ -201,9 +231,14 @@ struct RootTabView: View {
             let interval = Observability.appSignposter.beginInterval("rootTab.sceneActive")
             defer { Observability.appSignposter.endInterval("rootTab.sceneActive", interval) }
             AppNotificationService.shared.scheduleMonthlyFinanceReviewReminders()
+            scheduleHabitRemindersIfNeeded()
             scheduleQuoteRemindersIfNeeded()
             openPendingQuoteIfNeeded()
+            openPendingHabitsIfNeeded()
             Observability.debug(Observability.appLogger, "Scene became active; reminders refreshed.")
+        }
+        .onChange(of: habitNotificationSignature) { _, _ in
+            scheduleHabitRemindersIfNeeded()
         }
         .onChange(of: quoteNotificationSignature) { _, _ in
             scheduleQuoteRemindersIfNeeded()
@@ -218,7 +253,12 @@ struct RootTabView: View {
             guard let quoteID = notification.object as? UUID else { return }
             openQuote(with: quoteID)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .openHabitsTracking)) { _ in
+            openHabitsTracking()
+        }
         .onDisappear {
+            habitSchedulingTask?.cancel()
+            habitSchedulingTask = nil
             quoteSchedulingTask?.cancel()
             quoteSchedulingTask = nil
         }
@@ -244,6 +284,26 @@ struct RootTabView: View {
         openQuote(with: pendingID)
     }
 
+    private func openHabitsTracking() {
+        let interval = Observability.navigationSignposter.beginInterval("rootTab.openHabits")
+        defer { Observability.navigationSignposter.endInterval("rootTab.openHabits", interval) }
+        selectedMoreDestination = .habits
+        selectedTab = .more
+        Observability.debug(
+            Observability.navigationLogger,
+            "Deep link to habits applied."
+        )
+    }
+
+    private func openPendingHabitsIfNeeded() {
+        guard AppNotificationService.shared.consumePendingHabitsOpenRequest() else { return }
+        Observability.debug(
+            Observability.navigationLogger,
+            "Consumed pending habits reminder open request."
+        )
+        openHabitsTracking()
+    }
+
     private func scheduleQuoteRemindersIfNeeded(force: Bool = false) {
         if !force, lastQuoteSchedulingSignature == quoteNotificationSignature {
             Observability.debug(
@@ -267,11 +327,35 @@ struct RootTabView: View {
             AppNotificationService.shared.scheduleRandomQuoteReminders(quotes: quotes)
         }
     }
+
+    private func scheduleHabitRemindersIfNeeded(force: Bool = false) {
+        if !force, lastHabitSchedulingSignature == habitNotificationSignature {
+            Observability.debug(
+                Observability.notificationsLogger,
+                "Skipped habit scheduling in RootTabView: unchanged signature."
+            )
+            return
+        }
+        lastHabitSchedulingSignature = habitNotificationSignature
+
+        habitSchedulingTask?.cancel()
+        habitSchedulingTask = Task {
+            let interval = Observability.notificationSignposter.beginInterval("rootTab.habitSchedulingTask")
+            defer { Observability.notificationSignposter.endInterval("rootTab.habitSchedulingTask", interval) }
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled else { return }
+            Observability.debug(
+                Observability.notificationsLogger,
+                "Running habit scheduling task with \(habits.count) habits."
+            )
+            AppNotificationService.shared.scheduleDailyHabitReminders(habits: habits)
+        }
+    }
 }
 
 private struct MoreHubView: View {
     @Binding var themeMode: AppThemeMode
-    @State private var selectedDestination: MoreDestination?
+    @Binding var selectedDestination: MoreDestination?
 
     private let columns: [GridItem] = [
         GridItem(.flexible(), spacing: 10),
@@ -320,6 +404,8 @@ private struct MoreHubView: View {
     @ViewBuilder
     private func destinationView(for destination: MoreDestination) -> some View {
         switch destination {
+        case .habits:
+            HabitsView()
         case .notes:
             NotesView()
         case .bodyMeasurements:

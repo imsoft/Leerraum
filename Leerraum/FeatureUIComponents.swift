@@ -34,6 +34,11 @@ struct FeatureGradientPalette {
         dark: [AppPalette.LifeGoals.c950, AppPalette.LifeGoals.c900, AppPalette.LifeGoals.c800]
     )
 
+    static let habits = FeatureGradientPalette(
+        light: [AppPalette.Habits.c50, AppPalette.Habits.c100, AppPalette.Habits.c200],
+        dark: [AppPalette.Habits.c950, AppPalette.Habits.c900, AppPalette.Habits.c800]
+    )
+
     static let recommendations = FeatureGradientPalette(
         light: [AppPalette.Recommendations.c50, AppPalette.Recommendations.c100, AppPalette.Recommendations.c200],
         dark: [AppPalette.Recommendations.c950, AppPalette.Recommendations.c900, AppPalette.Recommendations.c800]

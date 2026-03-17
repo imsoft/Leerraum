@@ -28,6 +28,8 @@ struct LeerraumApp: App {
             GymSetRecord.self,
             FoodEntry.self,
             QuoteMessage.self,
+            Habit.self,
+            HabitEntry.self,
             BodyMeasurementEntry.self,
             RecommendationEntry.self,
             NoteCategory.self,
@@ -47,13 +49,18 @@ final class AppNotificationService: NSObject, UNUserNotificationCenterDelegate {
     private let maxPendingNotificationRequests = 64
     private let monthlyReminderIDPrefix = "finance.monthly.review."
     private let quoteReminderIDPrefix = "quotes.random."
+    private let habitReminderIDPrefix = "habits.daily."
     private let quoteUserInfoTypeKey = "leerraumNotificationType"
     private let quoteUserInfoTypeValue = "quoteMessage"
+    private let habitUserInfoTypeValue = "habitSummary"
     private let quoteUserInfoIDKey = "quoteID"
     private let stateQueue = DispatchQueue(label: "leerraum.notification.state")
     private var pendingQuoteMessageID: UUID?
+    private var pendingHabitsOpenRequest = false
     private var lastQuoteScheduleSignature: Int?
     private var lastQuoteScheduleDate: Date?
+    private var lastHabitScheduleSignature: Int?
+    private var lastHabitScheduleDate: Date?
 
     private override init() {
         super.init()
@@ -186,6 +193,75 @@ final class AppNotificationService: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
+    func consumePendingHabitsOpenRequest() -> Bool {
+        stateQueue.sync {
+            let shouldOpen = pendingHabitsOpenRequest
+            pendingHabitsOpenRequest = false
+            return shouldOpen
+        }
+    }
+
+    func scheduleDailyHabitReminders(habits: [Habit]) {
+        configure()
+
+        let validHabits = habits.filter {
+            $0.isActive && !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        let signature = habitScheduleSignature(for: validHabits)
+        let shouldSkip = stateQueue.sync { () -> Bool in
+            guard let lastHabitScheduleSignature, let lastHabitScheduleDate else { return false }
+            let isSameSignature = lastHabitScheduleSignature == signature
+            let wasScheduledRecently = Date().timeIntervalSince(lastHabitScheduleDate) < 10
+            return isSameSignature && wasScheduledRecently
+        }
+        if shouldSkip {
+            Observability.debug(
+                Observability.notificationsLogger,
+                "Skipped habit scheduling because signature did not change recently."
+            )
+            return
+        }
+
+        requestAuthorizationIfNeeded { [weak self] granted in
+            guard granted, let self else { return }
+
+            self.center.getPendingNotificationRequests { [weak self] requests in
+                guard let self else { return }
+                let interval = Observability.notificationSignposter.beginInterval("habit.schedule.pendingRequests")
+                defer { Observability.notificationSignposter.endInterval("habit.schedule.pendingRequests", interval) }
+
+                let existingHabitIDs = requests
+                    .map(\.identifier)
+                    .filter { $0.hasPrefix(self.habitReminderIDPrefix) }
+                if !existingHabitIDs.isEmpty {
+                    self.center.removePendingNotificationRequests(withIdentifiers: existingHabitIDs)
+                }
+
+                guard !validHabits.isEmpty else {
+                    self.stateQueue.sync {
+                        self.lastHabitScheduleSignature = nil
+                        self.lastHabitScheduleDate = nil
+                    }
+                    return
+                }
+
+                let nonHabitPendingCount = max(0, requests.count - existingHabitIDs.count)
+                let availableSlots = max(0, self.maxPendingNotificationRequests - nonHabitPendingCount)
+                guard availableSlots > 0 else { return }
+                let reminderRequest = self.dailyHabitReminderRequest(habits: validHabits)
+                self.center.add(reminderRequest)
+                self.stateQueue.sync {
+                    self.lastHabitScheduleSignature = signature
+                    self.lastHabitScheduleDate = Date()
+                }
+                Observability.debug(
+                    Observability.notificationsLogger,
+                    "Scheduled 1 general habits reminder."
+                )
+            }
+        }
+    }
+
     func scheduleMonthlyFinanceReviewReminders(monthsAhead: Int = 12) {
         configure()
 
@@ -288,6 +364,27 @@ final class AppNotificationService: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
+    private func dailyHabitReminderRequest(habits: [Habit]) -> UNNotificationRequest {
+        let interval = Observability.notificationSignposter.beginInterval("habitReminderRequest")
+        defer { Observability.notificationSignposter.endInterval("habitReminderRequest", interval) }
+
+        let triggerComponents = habitReminderTimeComponents(from: habits)
+        let trigger = UNCalendarNotificationTrigger(
+            dateMatching: triggerComponents,
+            repeats: true
+        )
+
+        let content = UNMutableNotificationContent()
+        content.title = "Leerraum"
+        content.subtitle = "Es hora de registrar tus habitos"
+        content.body = "Solo te toma unos segundos"
+        content.sound = UNNotificationSound(named: customSoundName)
+        content.userInfo = [quoteUserInfoTypeKey: habitUserInfoTypeValue]
+
+        let identifier = "\(habitReminderIDPrefix)general"
+        return UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
+    }
+
     private func randomReminderTimes(
         count: Int,
         startHour: Int,
@@ -348,6 +445,39 @@ final class AppNotificationService: NSObject, UNUserNotificationCenterDelegate {
         return hasher.finalize()
     }
 
+    private func habitReminderTimeComponents(from habits: [Habit]) -> DateComponents {
+        let defaultComponents = DateComponents(hour: 21, minute: 0, second: 0)
+        guard let selectedHabit = habits.min(by: { lhs, rhs in
+            if lhs.reminderHour != rhs.reminderHour {
+                return lhs.reminderHour < rhs.reminderHour
+            }
+            if lhs.reminderMinute != rhs.reminderMinute {
+                return lhs.reminderMinute < rhs.reminderMinute
+            }
+            return lhs.createdAt < rhs.createdAt
+        }) else {
+            return defaultComponents
+        }
+
+        return DateComponents(
+            hour: selectedHabit.reminderHour,
+            minute: selectedHabit.reminderMinute,
+            second: 0
+        )
+    }
+
+    private func habitScheduleSignature(for habits: [Habit]) -> Int {
+        var hasher = Hasher()
+        for habit in habits.sorted(by: { $0.id.uuidString < $1.id.uuidString }) {
+            hasher.combine(habit.id)
+            hasher.combine(habit.isActive)
+            hasher.combine(habit.title)
+            hasher.combine(habit.reminderHour)
+            hasher.combine(habit.reminderMinute)
+        }
+        return hasher.finalize()
+    }
+
     private func monthEndDate(forMonthOffset monthOffset: Int) -> Date? {
         guard let targetMonthDate = calendar.date(byAdding: .month, value: monthOffset, to: Date()),
               let monthInterval = calendar.dateInterval(of: .month, for: targetMonthDate),
@@ -393,6 +523,17 @@ final class AppNotificationService: NSObject, UNUserNotificationCenterDelegate {
                 Observability.notificationsLogger,
                 "Notification tap routed to quote: \(quoteID.uuidString)"
             )
+        } else if isHabitSummaryNotification(userInfo: userInfo) {
+            stateQueue.sync {
+                pendingHabitsOpenRequest = true
+            }
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .openHabitsTracking, object: nil)
+            }
+            Observability.debug(
+                Observability.notificationsLogger,
+                "Notification tap routed to habits."
+            )
         }
 
         completionHandler()
@@ -406,8 +547,16 @@ final class AppNotificationService: NSObject, UNUserNotificationCenterDelegate {
         }
         return UUID(uuidString: quoteIDText)
     }
+
+    private func isHabitSummaryNotification(userInfo: [AnyHashable: Any]) -> Bool {
+        guard let type = userInfo[quoteUserInfoTypeKey] as? String else {
+            return false
+        }
+        return type == habitUserInfoTypeValue
+    }
 }
 
 extension Notification.Name {
     static let openQuoteMessage = Notification.Name("leerraum.openQuoteMessage")
+    static let openHabitsTracking = Notification.Name("leerraum.openHabitsTracking")
 }
