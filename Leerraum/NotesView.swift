@@ -12,21 +12,59 @@ private struct NoteCategoryColorOption: Identifiable, Equatable {
     let green: Double
     let blue: Double
 
+    init(id: String, title: String, red: Double, green: Double, blue: Double) {
+        self.id = id
+        self.title = title
+        self.red = red
+        self.green = green
+        self.blue = blue
+    }
+
+    init(id: String, title: String, hex: String) {
+        let components = Self.rgbComponents(from: hex)
+        self.init(
+            id: id,
+            title: title,
+            red: components.red,
+            green: components.green,
+            blue: components.blue
+        )
+    }
+
     var color: Color {
         Color(red: red, green: green, blue: blue)
     }
 
+    private static func rgbComponents(from hex: String) -> (red: Double, green: Double, blue: Double) {
+        let cleanHex = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+        var int: UInt64 = 0
+        Scanner(string: cleanHex).scanHexInt64(&int)
+
+        return (
+            red: Double((int >> 16) & 0xFF) / 255,
+            green: Double((int >> 8) & 0xFF) / 255,
+            blue: Double(int & 0xFF) / 255
+        )
+    }
+
     static let all: [NoteCategoryColorOption] = [
-        .init(id: "emerald", title: "Verde", red: 0.08, green: 0.63, blue: 0.32),
-        .init(id: "violet", title: "Violeta", red: 0.49, green: 0.13, blue: 0.99),
-        .init(id: "orange", title: "Naranja", red: 0.92, green: 0.33, blue: 0.15),
-        .init(id: "indigo", title: "Indigo", red: 0.26, green: 0.18, blue: 0.84),
-        .init(id: "teal", title: "Turquesa", red: 0.02, green: 0.58, blue: 0.51),
-        .init(id: "amber", title: "Ambar", red: 0.88, green: 0.46, blue: 0.17),
-        .init(id: "rose", title: "Rosa", red: 0.79, green: 0.09, blue: 0.45),
-        .init(id: "lime", title: "Lima", red: 0.37, green: 0.49, blue: 0.08),
-        .init(id: "slate", title: "Pizarra", red: 0.20, green: 0.25, blue: 0.33),
-        .init(id: "sky", title: "Azul", red: 0.14, green: 0.44, blue: 0.89)
+        .init(id: "green", title: "Verde", hex: "#16A34A"),
+        .init(id: "violet", title: "Violeta", hex: "#7C3AED"),
+        .init(id: "orange", title: "Naranja", hex: "#EA580C"),
+        .init(id: "indigo", title: "Indigo", hex: "#4F46E5"),
+        .init(id: "cyan", title: "Cian", hex: "#0891B2"),
+        .init(id: "yellow", title: "Amarillo", hex: "#CA8A04"),
+        .init(id: "pink", title: "Rosa", hex: "#DB2777"),
+        .init(id: "lime", title: "Lima", hex: "#65A30D"),
+        .init(id: "teal", title: "Turquesa", hex: "#0D9488"),
+        .init(id: "amber", title: "Ambar", hex: "#D97706"),
+        .init(id: "red", title: "Rojo", hex: "#DC2626"),
+        .init(id: "emerald", title: "Esmeralda", hex: "#059669"),
+        .init(id: "sky", title: "Cielo", hex: "#0284C7"),
+        .init(id: "blue", title: "Azul", hex: "#2563EB"),
+        .init(id: "purple", title: "Purpura", hex: "#9333EA"),
+        .init(id: "fuchsia", title: "Fucsia", hex: "#C026D3"),
+        .init(id: "rose", title: "Rosa intenso", hex: "#E11D48")
     ]
 }
 
@@ -37,15 +75,20 @@ private enum NoteCategoryDefaults {
         let color: NoteCategoryColorOption
     }
 
+    private static func option(_ id: String) -> NoteCategoryColorOption {
+        NoteCategoryColorOption.all.first(where: { $0.id == id }) ?? NoteCategoryColorOption.all[0]
+    }
+
     static let entries: [Entry] = [
-        .init(name: "Finanzas", icon: "chart.line.uptrend.xyaxis", color: .all.first(where: { $0.id == "emerald" }) ?? .all[0]),
-        .init(name: "Gym", icon: "figure.strengthtraining.traditional", color: .all.first(where: { $0.id == "violet" }) ?? .all[1]),
-        .init(name: "Comidas", icon: "fork.knife", color: .all.first(where: { $0.id == "orange" }) ?? .all[2]),
-        .init(name: "Frases", icon: "quote.bubble", color: .all.first(where: { $0.id == "indigo" }) ?? .all[3]),
-        .init(name: "Medidas", icon: "ruler", color: .all.first(where: { $0.id == "teal" }) ?? .all[4]),
-        .init(name: "Ideas", icon: "lightbulb", color: .all.first(where: { $0.id == "amber" }) ?? .all[5]),
-        .init(name: "Metas de vida", icon: "target", color: .all.first(where: { $0.id == "rose" }) ?? .all[6]),
-        .init(name: "Recomendaciones", icon: "sparkles.rectangle.stack", color: .all.first(where: { $0.id == "lime" }) ?? .all[7])
+        .init(name: "Finanzas", icon: "chart.line.uptrend.xyaxis", color: option("green")),
+        .init(name: "Gym", icon: "figure.strengthtraining.traditional", color: option("violet")),
+        .init(name: "Comidas", icon: "fork.knife", color: option("orange")),
+        .init(name: "Frases", icon: "quote.bubble", color: option("indigo")),
+        .init(name: "Medidas", icon: "ruler", color: option("cyan")),
+        .init(name: "Ideas", icon: "lightbulb", color: option("yellow")),
+        .init(name: "Metas de vida", icon: "target", color: option("pink")),
+        .init(name: "Habitos", icon: "checklist", color: option("lime")),
+        .init(name: "Recomendaciones", icon: "sparkles.rectangle.stack", color: option("teal"))
     ]
 
     static let iconOptions: [String] = [
@@ -169,6 +212,7 @@ struct NotesView: View {
             .navigationBarTitleDisplayMode(.inline)
             .onAppear {
                 seedDefaultCategoriesIfNeeded()
+                syncDefaultCategoriesStyleIfNeeded()
             }
             .sheet(isPresented: $showingAddCategorySheet) {
                 AddNoteCategoryView(existingCategories: categories) { payload in
@@ -225,6 +269,31 @@ struct NotesView: View {
                     blue: entry.color.blue
                 )
                 modelContext.insert(category)
+            }
+        }
+    }
+
+    private func syncDefaultCategoriesStyleIfNeeded() {
+        let defaultsByName = Dictionary(
+            uniqueKeysWithValues: NoteCategoryDefaults.entries.map {
+                ($0.name.lowercased(), $0)
+            }
+        )
+
+        for category in categories {
+            let key = category.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard let style = defaultsByName[key] else { continue }
+
+            let isDifferentColor =
+                abs(category.red - style.color.red) > 0.001
+                || abs(category.green - style.color.green) > 0.001
+                || abs(category.blue - style.color.blue) > 0.001
+
+            if category.icon != style.icon || isDifferentColor {
+                category.icon = style.icon
+                category.red = style.color.red
+                category.green = style.color.green
+                category.blue = style.color.blue
             }
         }
     }

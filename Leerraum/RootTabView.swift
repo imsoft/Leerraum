@@ -28,6 +28,7 @@ private enum RootTab: Hashable {
 private enum MoreDestination: String, CaseIterable, Identifiable {
     case habits
     case notes
+    case paletteCatalog
     case bodyMeasurements
     case recommendations
     case appIdeas
@@ -42,6 +43,8 @@ private enum MoreDestination: String, CaseIterable, Identifiable {
             return "Habitos"
         case .notes:
             return "Notas"
+        case .paletteCatalog:
+            return "Paleta de colores"
         case .bodyMeasurements:
             return "Medidas corporales"
         case .recommendations:
@@ -61,6 +64,8 @@ private enum MoreDestination: String, CaseIterable, Identifiable {
             return "Crea habitos y registra tu avance diario."
         case .notes:
             return "Guarda notas por categoria y color."
+        case .paletteCatalog:
+            return "Consulta colores activos y reservados."
         case .bodyMeasurements:
             return "Registra peso y progreso en el tiempo."
         case .recommendations:
@@ -80,6 +85,8 @@ private enum MoreDestination: String, CaseIterable, Identifiable {
             return "checklist"
         case .notes:
             return "note.text"
+        case .paletteCatalog:
+            return "paintpalette"
         case .bodyMeasurements:
             return "ruler"
         case .recommendations:
@@ -99,6 +106,8 @@ private enum MoreDestination: String, CaseIterable, Identifiable {
             return AppPalette.Habits.c700
         case .notes:
             return AppPalette.Notes.c700
+        case .paletteCatalog:
+            return AppPalette.Blue.c700
         case .bodyMeasurements:
             return AppPalette.Body.c700
         case .recommendations:
@@ -478,6 +487,8 @@ private struct MoreHubView: View {
             HabitsView()
         case .notes:
             NotesView()
+        case .paletteCatalog:
+            PaletteCatalogView()
         case .bodyMeasurements:
             BodyMeasurementsView()
         case .recommendations:
