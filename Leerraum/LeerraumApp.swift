@@ -606,17 +606,18 @@ final class AppNotificationService: NSObject, UNUserNotificationCenterDelegate {
         for goalTitle: String,
         daySeed: Int
     ) -> (subtitle: String, body: String) {
+        let quotedGoalTitle = "\"\(goalTitle)\""
         let prompts: [(subtitle: String, body: String)] = [
             (
-                subtitle: "¿Como vas con \(goalTitle)?",
+                subtitle: "¿Como vas con \(quotedGoalTitle)?",
                 body: "Revisa hoy tu progreso y da un paso mas."
             ),
             (
-                subtitle: "¿Que te falta para completar \(goalTitle)?",
+                subtitle: "¿Que te falta para completar \(quotedGoalTitle)?",
                 body: "Actualiza tu avance en Metas de vida."
             ),
             (
-                subtitle: "¿Como si puedes cumplir \(goalTitle)?",
+                subtitle: "¿Como si puedes cumplir \(quotedGoalTitle)?",
                 body: "Define el siguiente paso y registralo en Leerraum."
             )
         ]
