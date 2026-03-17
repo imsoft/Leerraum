@@ -878,8 +878,16 @@ private struct HabitCalendarView: View {
                     }
 
                     HStack(spacing: 8) {
-                        HabitsSummaryPill(title: "Cumplidos", value: "\(monthCompletedCount)")
-                        HabitsSummaryPill(title: "No cumplidos", value: "\(monthMissedCount)")
+                        HabitCalendarMetricCard(
+                            title: "Cumplidos",
+                            value: "\(monthCompletedCount)",
+                            tint: AppPalette.Habits.c700
+                        )
+                        HabitCalendarMetricCard(
+                            title: "No cumplidos",
+                            value: "\(monthMissedCount)",
+                            tint: Color.financeExpenseAccent
+                        )
                     }
                 }
                 .padding(.horizontal, 16)
@@ -912,6 +920,34 @@ private struct HabitCalendarLegendItem: View {
                 .font(.caption2.weight(.medium))
                 .foregroundStyle(Color.appTextSecondary)
         }
+    }
+}
+
+private struct HabitCalendarMetricCard: View {
+    let title: String
+    let value: String
+    let tint: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.appTextSecondary)
+            Text(value)
+                .font(.title3.weight(.bold))
+                .foregroundStyle(tint)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            Color.appSurface,
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(tint.opacity(0.30), lineWidth: 1)
+        )
     }
 }
 

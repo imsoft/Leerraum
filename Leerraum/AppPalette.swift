@@ -100,17 +100,17 @@ enum AppPalette {
     }
 
     enum Habits {
-        static let c50 = Color(hex: "#F0F9FF")
-        static let c100 = Color(hex: "#E0F2FE")
-        static let c200 = Color(hex: "#BAE6FD")
-        static let c300 = Color(hex: "#7DD3FC")
-        static let c400 = Color(hex: "#38BDF8")
-        static let c500 = Color(hex: "#0EA5E9")
-        static let c600 = Color(hex: "#0284C7")
-        static let c700 = Color(hex: "#0369A1")
-        static let c800 = Color(hex: "#075985")
-        static let c900 = Color(hex: "#0C4A6E")
-        static let c950 = Color(hex: "#082F49")
+        static let c50 = Color(hex: "#F0FDF4")
+        static let c100 = Color(hex: "#DCFCE7")
+        static let c200 = Color(hex: "#BBF7D0")
+        static let c300 = Color(hex: "#86EFAC")
+        static let c400 = Color(hex: "#4ADE80")
+        static let c500 = Color(hex: "#22C55E")
+        static let c600 = Color(hex: "#16A34A")
+        static let c700 = Color(hex: "#15803D")
+        static let c800 = Color(hex: "#166534")
+        static let c900 = Color(hex: "#14532D")
+        static let c950 = Color(hex: "#052E16")
     }
 
     enum Recommendations {

@@ -119,11 +119,14 @@ struct RootTabView: View {
     @State private var deepLinkedQuoteID: UUID?
     @State private var selectedMoreDestination: MoreDestination?
     @State private var habitSchedulingTask: Task<Void, Never>?
+    @State private var lifeGoalSchedulingTask: Task<Void, Never>?
     @State private var quoteSchedulingTask: Task<Void, Never>?
     @State private var lastHabitSchedulingSignature: Int?
+    @State private var lastLifeGoalSchedulingSignature: Int?
     @State private var lastQuoteSchedulingSignature: Int?
     @Environment(\.scenePhase) private var scenePhase
     @Query(sort: \Habit.createdAt, order: .reverse) private var habits: [Habit]
+    @Query(sort: \LifeGoal.createdAt, order: .reverse) private var lifeGoals: [LifeGoal]
     @Query(sort: \QuoteMessage.createdAt, order: .reverse) private var quotes: [QuoteMessage]
     @AppStorage(AppStorageKey.themeMode) private var themeModeRawValue = AppThemeMode.system.rawValue
 
@@ -176,6 +179,17 @@ struct RootTabView: View {
         return hasher.finalize()
     }
 
+    private var lifeGoalNotificationSignature: Int {
+        var hasher = Hasher()
+        for goal in lifeGoals {
+            hasher.combine(goal.id)
+            hasher.combine(goal.title)
+            hasher.combine(goal.progress)
+            hasher.combine(goal.targetDate)
+        }
+        return hasher.finalize()
+    }
+
     var body: some View {
         TabView(selection: $selectedTab) {
             ContentView()
@@ -221,9 +235,11 @@ struct RootTabView: View {
             AppNotificationService.shared.requestAuthorizationIfNeeded()
             AppNotificationService.shared.scheduleMonthlyFinanceReviewReminders()
             scheduleHabitRemindersIfNeeded(force: true)
+            scheduleLifeGoalRemindersIfNeeded(force: true)
             scheduleQuoteRemindersIfNeeded(force: true)
             openPendingQuoteIfNeeded()
             openPendingHabitsIfNeeded()
+            openPendingLifeGoalsIfNeeded()
             Observability.debug(Observability.appLogger, "RootTabView did appear.")
         }
         .onChange(of: scenePhase) { _, newPhase in
@@ -232,13 +248,18 @@ struct RootTabView: View {
             defer { Observability.appSignposter.endInterval("rootTab.sceneActive", interval) }
             AppNotificationService.shared.scheduleMonthlyFinanceReviewReminders()
             scheduleHabitRemindersIfNeeded()
+            scheduleLifeGoalRemindersIfNeeded()
             scheduleQuoteRemindersIfNeeded()
             openPendingQuoteIfNeeded()
             openPendingHabitsIfNeeded()
+            openPendingLifeGoalsIfNeeded()
             Observability.debug(Observability.appLogger, "Scene became active; reminders refreshed.")
         }
         .onChange(of: habitNotificationSignature) { _, _ in
             scheduleHabitRemindersIfNeeded()
+        }
+        .onChange(of: lifeGoalNotificationSignature) { _, _ in
+            scheduleLifeGoalRemindersIfNeeded()
         }
         .onChange(of: quoteNotificationSignature) { _, _ in
             scheduleQuoteRemindersIfNeeded()
@@ -256,9 +277,14 @@ struct RootTabView: View {
         .onReceive(NotificationCenter.default.publisher(for: .openHabitsTracking)) { _ in
             openHabitsTracking()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .openLifeGoalsTracking)) { _ in
+            openLifeGoalsTracking()
+        }
         .onDisappear {
             habitSchedulingTask?.cancel()
             habitSchedulingTask = nil
+            lifeGoalSchedulingTask?.cancel()
+            lifeGoalSchedulingTask = nil
             quoteSchedulingTask?.cancel()
             quoteSchedulingTask = nil
         }
@@ -302,6 +328,26 @@ struct RootTabView: View {
             "Consumed pending habits reminder open request."
         )
         openHabitsTracking()
+    }
+
+    private func openLifeGoalsTracking() {
+        let interval = Observability.navigationSignposter.beginInterval("rootTab.openLifeGoals")
+        defer { Observability.navigationSignposter.endInterval("rootTab.openLifeGoals", interval) }
+        selectedMoreDestination = .lifeGoals
+        selectedTab = .more
+        Observability.debug(
+            Observability.navigationLogger,
+            "Deep link to life goals applied."
+        )
+    }
+
+    private func openPendingLifeGoalsIfNeeded() {
+        guard AppNotificationService.shared.consumePendingLifeGoalsOpenRequest() else { return }
+        Observability.debug(
+            Observability.navigationLogger,
+            "Consumed pending life goals reminder open request."
+        )
+        openLifeGoalsTracking()
     }
 
     private func scheduleQuoteRemindersIfNeeded(force: Bool = false) {
@@ -349,6 +395,30 @@ struct RootTabView: View {
                 "Running habit scheduling task with \(habits.count) habits."
             )
             AppNotificationService.shared.scheduleDailyHabitReminders(habits: habits)
+        }
+    }
+
+    private func scheduleLifeGoalRemindersIfNeeded(force: Bool = false) {
+        if !force, lastLifeGoalSchedulingSignature == lifeGoalNotificationSignature {
+            Observability.debug(
+                Observability.notificationsLogger,
+                "Skipped life goals scheduling in RootTabView: unchanged signature."
+            )
+            return
+        }
+        lastLifeGoalSchedulingSignature = lifeGoalNotificationSignature
+
+        lifeGoalSchedulingTask?.cancel()
+        lifeGoalSchedulingTask = Task {
+            let interval = Observability.notificationSignposter.beginInterval("rootTab.lifeGoalSchedulingTask")
+            defer { Observability.notificationSignposter.endInterval("rootTab.lifeGoalSchedulingTask", interval) }
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            Observability.debug(
+                Observability.notificationsLogger,
+                "Running life goals scheduling task with \(lifeGoals.count) goals."
+            )
+            AppNotificationService.shared.scheduleDailyLifeGoalReminders(goals: lifeGoals)
         }
     }
 }

@@ -50,17 +50,22 @@ final class AppNotificationService: NSObject, UNUserNotificationCenterDelegate {
     private let monthlyReminderIDPrefix = "finance.monthly.review."
     private let quoteReminderIDPrefix = "quotes.random."
     private let habitReminderIDPrefix = "habits.daily."
+    private let lifeGoalReminderIDPrefix = "lifegoals.daily."
     private let quoteUserInfoTypeKey = "leerraumNotificationType"
     private let quoteUserInfoTypeValue = "quoteMessage"
     private let habitUserInfoTypeValue = "habitSummary"
+    private let lifeGoalUserInfoTypeValue = "lifeGoalSummary"
     private let quoteUserInfoIDKey = "quoteID"
     private let stateQueue = DispatchQueue(label: "leerraum.notification.state")
     private var pendingQuoteMessageID: UUID?
     private var pendingHabitsOpenRequest = false
+    private var pendingLifeGoalsOpenRequest = false
     private var lastQuoteScheduleSignature: Int?
     private var lastQuoteScheduleDate: Date?
     private var lastHabitScheduleSignature: Int?
     private var lastHabitScheduleDate: Date?
+    private var lastLifeGoalScheduleSignature: Int?
+    private var lastLifeGoalScheduleDate: Date?
 
     private override init() {
         super.init()
@@ -201,6 +206,14 @@ final class AppNotificationService: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
+    func consumePendingLifeGoalsOpenRequest() -> Bool {
+        stateQueue.sync {
+            let shouldOpen = pendingLifeGoalsOpenRequest
+            pendingLifeGoalsOpenRequest = false
+            return shouldOpen
+        }
+    }
+
     func scheduleDailyHabitReminders(habits: [Habit]) {
         configure()
 
@@ -257,6 +270,72 @@ final class AppNotificationService: NSObject, UNUserNotificationCenterDelegate {
                 Observability.debug(
                     Observability.notificationsLogger,
                     "Scheduled 1 general habits reminder."
+                )
+            }
+        }
+    }
+
+    func scheduleDailyLifeGoalReminders(goals: [LifeGoal]) {
+        configure()
+
+        let pendingGoals = goals.filter {
+            $0.progress < 100 && !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        let daySeed = lifeGoalDaySeed()
+        let signature = lifeGoalScheduleSignature(for: pendingGoals, daySeed: daySeed)
+        let shouldSkip = stateQueue.sync { () -> Bool in
+            guard let lastLifeGoalScheduleSignature, let lastLifeGoalScheduleDate else { return false }
+            let isSameSignature = lastLifeGoalScheduleSignature == signature
+            let wasScheduledRecently = Date().timeIntervalSince(lastLifeGoalScheduleDate) < 10
+            return isSameSignature && wasScheduledRecently
+        }
+        if shouldSkip {
+            Observability.debug(
+                Observability.notificationsLogger,
+                "Skipped life goals scheduling because signature did not change recently."
+            )
+            return
+        }
+
+        requestAuthorizationIfNeeded { [weak self] granted in
+            guard granted, let self else { return }
+
+            self.center.getPendingNotificationRequests { [weak self] requests in
+                guard let self else { return }
+                let interval = Observability.notificationSignposter.beginInterval("lifeGoals.schedule.pendingRequests")
+                defer { Observability.notificationSignposter.endInterval("lifeGoals.schedule.pendingRequests", interval) }
+
+                let existingLifeGoalIDs = requests
+                    .map(\.identifier)
+                    .filter { $0.hasPrefix(self.lifeGoalReminderIDPrefix) }
+                if !existingLifeGoalIDs.isEmpty {
+                    self.center.removePendingNotificationRequests(withIdentifiers: existingLifeGoalIDs)
+                }
+
+                guard !pendingGoals.isEmpty else {
+                    self.stateQueue.sync {
+                        self.lastLifeGoalScheduleSignature = nil
+                        self.lastLifeGoalScheduleDate = nil
+                    }
+                    return
+                }
+
+                let nonLifeGoalPendingCount = max(0, requests.count - existingLifeGoalIDs.count)
+                let availableSlots = max(0, self.maxPendingNotificationRequests - nonLifeGoalPendingCount)
+                guard availableSlots > 0 else { return }
+
+                let reminderRequest = self.dailyLifeGoalReminderRequest(
+                    goals: pendingGoals,
+                    daySeed: daySeed
+                )
+                self.center.add(reminderRequest)
+                self.stateQueue.sync {
+                    self.lastLifeGoalScheduleSignature = signature
+                    self.lastLifeGoalScheduleDate = Date()
+                }
+                Observability.debug(
+                    Observability.notificationsLogger,
+                    "Scheduled 1 life goals reminder."
                 )
             }
         }
@@ -385,6 +464,34 @@ final class AppNotificationService: NSObject, UNUserNotificationCenterDelegate {
         return UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
     }
 
+    private func dailyLifeGoalReminderRequest(
+        goals: [LifeGoal],
+        daySeed: Int
+    ) -> UNNotificationRequest {
+        let interval = Observability.notificationSignposter.beginInterval("lifeGoalReminderRequest")
+        defer { Observability.notificationSignposter.endInterval("lifeGoalReminderRequest", interval) }
+
+        let triggerComponents = lifeGoalReminderTimeComponents()
+        let trigger = UNCalendarNotificationTrigger(
+            dateMatching: triggerComponents,
+            repeats: true
+        )
+
+        let selectedGoal = selectedLifeGoalForReminder(goals: goals, daySeed: daySeed)
+        let sanitizedTitle = sanitizedLifeGoalTitle(selectedGoal?.title ?? "tu meta")
+        let prompt = lifeGoalPrompt(for: sanitizedTitle, daySeed: daySeed)
+
+        let content = UNMutableNotificationContent()
+        content.title = "Leerraum"
+        content.subtitle = prompt.subtitle
+        content.body = prompt.body
+        content.sound = UNNotificationSound(named: customSoundName)
+        content.userInfo = [quoteUserInfoTypeKey: lifeGoalUserInfoTypeValue]
+
+        let identifier = "\(lifeGoalReminderIDPrefix)general"
+        return UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
+    }
+
     private func randomReminderTimes(
         count: Int,
         startHour: Int,
@@ -466,6 +573,58 @@ final class AppNotificationService: NSObject, UNUserNotificationCenterDelegate {
         )
     }
 
+    private func lifeGoalReminderTimeComponents() -> DateComponents {
+        DateComponents(hour: 20, minute: 0, second: 0)
+    }
+
+    private func selectedLifeGoalForReminder(
+        goals: [LifeGoal],
+        daySeed: Int
+    ) -> LifeGoal? {
+        guard !goals.isEmpty else { return nil }
+        let sortedGoals = goals.sorted(by: { $0.id.uuidString < $1.id.uuidString })
+        let index = abs(daySeed) % sortedGoals.count
+        return sortedGoals[index]
+    }
+
+    private func sanitizedLifeGoalTitle(_ title: String) -> String {
+        let normalized = title
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !normalized.isEmpty else {
+            return "tu meta"
+        }
+
+        let maxLength = 80
+        guard normalized.count > maxLength else { return normalized }
+        let endIndex = normalized.index(normalized.startIndex, offsetBy: maxLength)
+        return String(normalized[..<endIndex]) + "..."
+    }
+
+    private func lifeGoalPrompt(
+        for goalTitle: String,
+        daySeed: Int
+    ) -> (subtitle: String, body: String) {
+        let prompts: [(subtitle: String, body: String)] = [
+            (
+                subtitle: "¿Como vas con \(goalTitle)?",
+                body: "Revisa hoy tu progreso y da un paso mas."
+            ),
+            (
+                subtitle: "¿Que te falta para completar \(goalTitle)?",
+                body: "Actualiza tu avance en Metas de vida."
+            ),
+            (
+                subtitle: "¿Como si puedes cumplir \(goalTitle)?",
+                body: "Define el siguiente paso y registralo en Leerraum."
+            )
+        ]
+
+        let index = abs(daySeed) % prompts.count
+        return prompts[index]
+    }
+
     private func habitScheduleSignature(for habits: [Habit]) -> Int {
         var hasher = Hasher()
         for habit in habits.sorted(by: { $0.id.uuidString < $1.id.uuidString }) {
@@ -476,6 +635,25 @@ final class AppNotificationService: NSObject, UNUserNotificationCenterDelegate {
             hasher.combine(habit.reminderMinute)
         }
         return hasher.finalize()
+    }
+
+    private func lifeGoalScheduleSignature(for goals: [LifeGoal], daySeed: Int) -> Int {
+        var hasher = Hasher()
+        hasher.combine(daySeed)
+        for goal in goals.sorted(by: { $0.id.uuidString < $1.id.uuidString }) {
+            hasher.combine(goal.id)
+            hasher.combine(goal.title)
+            hasher.combine(goal.progress)
+            hasher.combine(goal.targetDate)
+        }
+        return hasher.finalize()
+    }
+
+    private func lifeGoalDaySeed() -> Int {
+        let now = Date()
+        let year = calendar.component(.year, from: now)
+        let day = calendar.ordinality(of: .day, in: .year, for: now) ?? 0
+        return year * 1000 + day
     }
 
     private func monthEndDate(forMonthOffset monthOffset: Int) -> Date? {
@@ -534,6 +712,17 @@ final class AppNotificationService: NSObject, UNUserNotificationCenterDelegate {
                 Observability.notificationsLogger,
                 "Notification tap routed to habits."
             )
+        } else if isLifeGoalSummaryNotification(userInfo: userInfo) {
+            stateQueue.sync {
+                pendingLifeGoalsOpenRequest = true
+            }
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .openLifeGoalsTracking, object: nil)
+            }
+            Observability.debug(
+                Observability.notificationsLogger,
+                "Notification tap routed to life goals."
+            )
         }
 
         completionHandler()
@@ -554,9 +743,17 @@ final class AppNotificationService: NSObject, UNUserNotificationCenterDelegate {
         }
         return type == habitUserInfoTypeValue
     }
+
+    private func isLifeGoalSummaryNotification(userInfo: [AnyHashable: Any]) -> Bool {
+        guard let type = userInfo[quoteUserInfoTypeKey] as? String else {
+            return false
+        }
+        return type == lifeGoalUserInfoTypeValue
+    }
 }
 
 extension Notification.Name {
     static let openQuoteMessage = Notification.Name("leerraum.openQuoteMessage")
     static let openHabitsTracking = Notification.Name("leerraum.openHabitsTracking")
+    static let openLifeGoalsTracking = Notification.Name("leerraum.openLifeGoalsTracking")
 }
