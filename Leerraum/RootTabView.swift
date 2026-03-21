@@ -27,6 +27,7 @@ private enum RootTab: Hashable {
 
 private enum MoreDestination: String, CaseIterable, Identifiable {
     case habits
+    case reminders
     case notes
     case paletteCatalog
     case bodyMeasurements
@@ -41,6 +42,8 @@ private enum MoreDestination: String, CaseIterable, Identifiable {
         switch self {
         case .habits:
             return "Habitos"
+        case .reminders:
+            return "Recordatorios"
         case .notes:
             return "Notas"
         case .paletteCatalog:
@@ -62,6 +65,8 @@ private enum MoreDestination: String, CaseIterable, Identifiable {
         switch self {
         case .habits:
             return "Crea habitos y registra tu avance diario."
+        case .reminders:
+            return "Tareas pendientes con notificaciones aleatorias."
         case .notes:
             return "Guarda notas por categoria y color."
         case .paletteCatalog:
@@ -83,6 +88,8 @@ private enum MoreDestination: String, CaseIterable, Identifiable {
         switch self {
         case .habits:
             return "checklist"
+        case .reminders:
+            return "bell.badge"
         case .notes:
             return "note.text"
         case .paletteCatalog:
@@ -104,6 +111,8 @@ private enum MoreDestination: String, CaseIterable, Identifiable {
         switch self {
         case .habits:
             return AppPalette.Habits.c700
+        case .reminders:
+            return AppPalette.Reminders.c700
         case .notes:
             return AppPalette.Notes.c700
         case .paletteCatalog:
@@ -130,13 +139,17 @@ struct RootTabView: View {
     @State private var habitSchedulingTask: Task<Void, Never>?
     @State private var lifeGoalSchedulingTask: Task<Void, Never>?
     @State private var quoteSchedulingTask: Task<Void, Never>?
+    @State private var reminderSchedulingTask: Task<Void, Never>?
     @State private var lastHabitSchedulingSignature: Int?
     @State private var lastLifeGoalSchedulingSignature: Int?
     @State private var lastQuoteSchedulingSignature: Int?
+    @State private var lastReminderSchedulingSignature: Int?
+    @State private var deepLinkedReminderID: UUID?
     @Environment(\.scenePhase) private var scenePhase
     @Query(sort: \Habit.createdAt, order: .reverse) private var habits: [Habit]
     @Query(sort: \LifeGoal.createdAt, order: .reverse) private var lifeGoals: [LifeGoal]
     @Query(sort: \QuoteMessage.createdAt, order: .reverse) private var quotes: [QuoteMessage]
+    @Query(sort: \Reminder.createdAt, order: .reverse) private var reminders: [Reminder]
     @AppStorage(AppStorageKey.themeMode) private var themeModeRawValue = AppThemeMode.system.rawValue
 
     private var selectedThemeMode: AppThemeMode {
@@ -199,6 +212,16 @@ struct RootTabView: View {
         return hasher.finalize()
     }
 
+    private var reminderNotificationSignature: Int {
+        var hasher = Hasher()
+        for reminder in reminders {
+            hasher.combine(reminder.id)
+            hasher.combine(reminder.title)
+            hasher.combine(reminder.isCompleted)
+        }
+        return hasher.finalize()
+    }
+
     var body: some View {
         TabView(selection: $selectedTab) {
             ContentView()
@@ -227,7 +250,8 @@ struct RootTabView: View {
 
             MoreHubView(
                 themeMode: selectedThemeModeBinding,
-                selectedDestination: $selectedMoreDestination
+                selectedDestination: $selectedMoreDestination,
+                deepLinkedReminderID: $deepLinkedReminderID
             )
                 .tabItem {
                     Label("Más", systemImage: "square.grid.2x2")
@@ -246,9 +270,11 @@ struct RootTabView: View {
             scheduleHabitRemindersIfNeeded(force: true)
             scheduleLifeGoalRemindersIfNeeded(force: true)
             scheduleQuoteRemindersIfNeeded(force: true)
+            scheduleReminderNotificationsIfNeeded(force: true)
             openPendingQuoteIfNeeded()
             openPendingHabitsIfNeeded()
             openPendingLifeGoalsIfNeeded()
+            openPendingReminderIfNeeded()
             Observability.debug(Observability.appLogger, "RootTabView did appear.")
         }
         .onChange(of: scenePhase) { _, newPhase in
@@ -259,9 +285,11 @@ struct RootTabView: View {
             scheduleHabitRemindersIfNeeded()
             scheduleLifeGoalRemindersIfNeeded()
             scheduleQuoteRemindersIfNeeded()
+            scheduleReminderNotificationsIfNeeded()
             openPendingQuoteIfNeeded()
             openPendingHabitsIfNeeded()
             openPendingLifeGoalsIfNeeded()
+            openPendingReminderIfNeeded()
             Observability.debug(Observability.appLogger, "Scene became active; reminders refreshed.")
         }
         .onChange(of: habitNotificationSignature) { _, _ in
@@ -272,6 +300,9 @@ struct RootTabView: View {
         }
         .onChange(of: quoteNotificationSignature) { _, _ in
             scheduleQuoteRemindersIfNeeded()
+        }
+        .onChange(of: reminderNotificationSignature) { _, _ in
+            scheduleReminderNotificationsIfNeeded()
         }
         .onChange(of: selectedTab) { _, newTab in
             Observability.debug(
@@ -289,6 +320,10 @@ struct RootTabView: View {
         .onReceive(NotificationCenter.default.publisher(for: .openLifeGoalsTracking)) { _ in
             openLifeGoalsTracking()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .openReminderDetail)) { notification in
+            guard let reminderID = notification.object as? UUID else { return }
+            openReminderDetail(with: reminderID)
+        }
         .onDisappear {
             habitSchedulingTask?.cancel()
             habitSchedulingTask = nil
@@ -296,6 +331,8 @@ struct RootTabView: View {
             lifeGoalSchedulingTask = nil
             quoteSchedulingTask?.cancel()
             quoteSchedulingTask = nil
+            reminderSchedulingTask?.cancel()
+            reminderSchedulingTask = nil
         }
     }
 
@@ -357,6 +394,27 @@ struct RootTabView: View {
             "Consumed pending life goals reminder open request."
         )
         openLifeGoalsTracking()
+    }
+
+    private func openReminderDetail(with id: UUID) {
+        let interval = Observability.navigationSignposter.beginInterval("rootTab.openReminder")
+        defer { Observability.navigationSignposter.endInterval("rootTab.openReminder", interval) }
+        deepLinkedReminderID = id
+        selectedMoreDestination = .reminders
+        selectedTab = .more
+        Observability.debug(
+            Observability.navigationLogger,
+            "Deep link to reminder applied: \(id.uuidString)"
+        )
+    }
+
+    private func openPendingReminderIfNeeded() {
+        guard let pendingID = AppNotificationService.shared.consumePendingReminderID() else { return }
+        Observability.debug(
+            Observability.navigationLogger,
+            "Consumed pending reminder id: \(pendingID.uuidString)"
+        )
+        openReminderDetail(with: pendingID)
     }
 
     private func scheduleQuoteRemindersIfNeeded(force: Bool = false) {
@@ -430,11 +488,36 @@ struct RootTabView: View {
             AppNotificationService.shared.scheduleDailyLifeGoalReminders(goals: lifeGoals)
         }
     }
+
+    private func scheduleReminderNotificationsIfNeeded(force: Bool = false) {
+        if !force, lastReminderSchedulingSignature == reminderNotificationSignature {
+            Observability.debug(
+                Observability.notificationsLogger,
+                "Skipped reminder scheduling in RootTabView: unchanged signature."
+            )
+            return
+        }
+        lastReminderSchedulingSignature = reminderNotificationSignature
+
+        reminderSchedulingTask?.cancel()
+        reminderSchedulingTask = Task {
+            let interval = Observability.notificationSignposter.beginInterval("rootTab.reminderSchedulingTask")
+            defer { Observability.notificationSignposter.endInterval("rootTab.reminderSchedulingTask", interval) }
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            Observability.debug(
+                Observability.notificationsLogger,
+                "Running reminder scheduling task with \(reminders.count) reminders."
+            )
+            AppNotificationService.shared.scheduleRandomReminderNotifications(reminders: reminders)
+        }
+    }
 }
 
 private struct MoreHubView: View {
     @Binding var themeMode: AppThemeMode
     @Binding var selectedDestination: MoreDestination?
+    @Binding var deepLinkedReminderID: UUID?
 
     private let columns: [GridItem] = [
         GridItem(.flexible(), spacing: 10),
@@ -485,6 +568,9 @@ private struct MoreHubView: View {
         switch destination {
         case .habits:
             HabitsView()
+        case .reminders:
+            RemindersView(deepLinkedReminderID: deepLinkedReminderID)
+                .onDisappear { deepLinkedReminderID = nil }
         case .notes:
             NotesView()
         case .paletteCatalog:

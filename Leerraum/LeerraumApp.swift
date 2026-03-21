@@ -36,7 +36,8 @@ struct LeerraumApp: App {
             NoteCategory.self,
             NoteEntry.self,
             AppIdeaNote.self,
-            LifeGoal.self
+            LifeGoal.self,
+            Reminder.self
         ])
     }
 }
@@ -52,13 +53,17 @@ final class AppNotificationService: NSObject, UNUserNotificationCenterDelegate {
     private let quoteReminderIDPrefix = "quotes.random."
     private let habitReminderIDPrefix = "habits.daily."
     private let lifeGoalReminderIDPrefix = "lifegoals.daily."
+    private let reminderIDPrefix = "reminders.random."
     private let quoteUserInfoTypeKey = "leerraumNotificationType"
     private let quoteUserInfoTypeValue = "quoteMessage"
     private let habitUserInfoTypeValue = "habitSummary"
     private let lifeGoalUserInfoTypeValue = "lifeGoalSummary"
+    private let reminderUserInfoTypeValue = "reminderTask"
     private let quoteUserInfoIDKey = "quoteID"
+    private let reminderUserInfoIDKey = "reminderID"
     private let stateQueue = DispatchQueue(label: "leerraum.notification.state")
     private var pendingQuoteMessageID: UUID?
+    private var pendingReminderID: UUID?
     private var pendingHabitsOpenRequest = false
     private var pendingLifeGoalsOpenRequest = false
     private var lastQuoteScheduleSignature: Int?
@@ -67,6 +72,8 @@ final class AppNotificationService: NSObject, UNUserNotificationCenterDelegate {
     private var lastHabitScheduleDate: Date?
     private var lastLifeGoalScheduleSignature: Int?
     private var lastLifeGoalScheduleDate: Date?
+    private var lastReminderScheduleSignature: Int?
+    private var lastReminderScheduleDate: Date?
 
     private override init() {
         super.init()
@@ -215,6 +222,14 @@ final class AppNotificationService: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
+    func consumePendingReminderID() -> UUID? {
+        stateQueue.sync {
+            let id = pendingReminderID
+            pendingReminderID = nil
+            return id
+        }
+    }
+
     func scheduleDailyHabitReminders(habits: [Habit]) {
         configure()
 
@@ -337,6 +352,71 @@ final class AppNotificationService: NSObject, UNUserNotificationCenterDelegate {
                 Observability.debug(
                     Observability.notificationsLogger,
                     "Scheduled 1 life goals reminder."
+                )
+            }
+        }
+    }
+
+    func scheduleRandomReminderNotifications(reminders: [Reminder]) {
+        configure()
+
+        let pendingReminders = reminders.filter {
+            !$0.isCompleted && !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        let signature = reminderScheduleSignature(for: pendingReminders)
+        let shouldSkip = stateQueue.sync { () -> Bool in
+            guard let lastReminderScheduleSignature, let lastReminderScheduleDate else { return false }
+            let isSameSignature = lastReminderScheduleSignature == signature
+            let wasScheduledRecently = Date().timeIntervalSince(lastReminderScheduleDate) < 10
+            return isSameSignature && wasScheduledRecently
+        }
+        if shouldSkip {
+            Observability.debug(
+                Observability.notificationsLogger,
+                "Skipped reminder scheduling because signature did not change recently."
+            )
+            return
+        }
+
+        requestAuthorizationIfNeeded { [weak self] granted in
+            guard granted, let self else { return }
+
+            self.center.getPendingNotificationRequests { [weak self] requests in
+                guard let self else { return }
+                let interval = Observability.notificationSignposter.beginInterval("reminder.schedule.pendingRequests")
+                defer { Observability.notificationSignposter.endInterval("reminder.schedule.pendingRequests", interval) }
+
+                let existingReminderIDs = requests
+                    .map(\.identifier)
+                    .filter { $0.hasPrefix(self.reminderIDPrefix) }
+                if !existingReminderIDs.isEmpty {
+                    self.center.removePendingNotificationRequests(withIdentifiers: existingReminderIDs)
+                }
+
+                guard !pendingReminders.isEmpty else {
+                    self.stateQueue.sync {
+                        self.lastReminderScheduleSignature = nil
+                        self.lastReminderScheduleDate = nil
+                    }
+                    return
+                }
+
+                let nonReminderPendingCount = max(0, requests.count - existingReminderIDs.count)
+                let availableSlots = max(0, self.maxPendingNotificationRequests - nonReminderPendingCount)
+                guard availableSlots > 0 else { return }
+
+                let reminderRequests = self.randomReminderNotificationRequests(
+                    reminders: pendingReminders,
+                    maxCount: availableSlots
+                )
+                reminderRequests.forEach { self.center.add($0) }
+                self.stateQueue.sync {
+                    self.lastReminderScheduleSignature = signature
+                    self.lastReminderScheduleDate = Date()
+                }
+                Observability.debug(
+                    Observability.notificationsLogger,
+                    "Scheduled \(reminderRequests.count) reminder notifications."
                 )
             }
         }
@@ -639,6 +719,78 @@ final class AppNotificationService: NSObject, UNUserNotificationCenterDelegate {
         return hasher.finalize()
     }
 
+    private func randomReminderNotificationRequests(
+        reminders: [Reminder],
+        maxCount: Int
+    ) -> [UNNotificationRequest] {
+        let interval = Observability.notificationSignposter.beginInterval("reminderNotificationRequests")
+        defer { Observability.notificationSignposter.endInterval("reminderNotificationRequests", interval) }
+        guard !reminders.isEmpty, maxCount > 0 else { return [] }
+
+        // Each pending reminder gets up to 3 random notifications per day
+        let notificationsPerReminder = 3
+        var allRequests: [UNNotificationRequest] = []
+
+        for reminder in reminders {
+            let days = calendar.dateComponents([.day], from: reminder.createdAt, to: Date()).day ?? 0
+            let postponedText: String
+            if days == 0 {
+                postponedText = "Creado hoy"
+            } else if days == 1 {
+                postponedText = "1 dia postergado"
+            } else {
+                postponedText = "\(days) dias postergado"
+            }
+
+            let times = randomReminderTimes(
+                count: notificationsPerReminder,
+                startHour: 9,
+                endHour: 21
+            )
+
+            for (index, triggerComponents) in times.enumerated() {
+                let trigger = UNCalendarNotificationTrigger(
+                    dateMatching: triggerComponents,
+                    repeats: true
+                )
+
+                let content = UNMutableNotificationContent()
+                content.title = "Leerraum"
+                content.subtitle = reminder.title
+                content.body = postponedText
+                content.sound = UNNotificationSound(named: customSoundName)
+                content.userInfo = [
+                    quoteUserInfoTypeKey: reminderUserInfoTypeValue,
+                    reminderUserInfoIDKey: reminder.id.uuidString
+                ]
+
+                let identifier = "\(reminderIDPrefix)\(reminder.id.uuidString).\(index)"
+                let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
+                allRequests.append(request)
+            }
+        }
+
+        // Respect the available slots limit
+        if allRequests.count > maxCount {
+            allRequests = Array(allRequests.shuffled().prefix(maxCount))
+        }
+
+        return allRequests
+    }
+
+    private func reminderScheduleSignature(for reminders: [Reminder]) -> Int {
+        var hasher = Hasher()
+        for reminder in reminders.sorted(by: { $0.id.uuidString < $1.id.uuidString }) {
+            hasher.combine(reminder.id)
+            hasher.combine(reminder.isCompleted)
+            hasher.combine(reminder.title)
+        }
+        // Include day so postponed text refreshes daily
+        let dayOfYear = calendar.ordinality(of: .day, in: .year, for: Date()) ?? 0
+        hasher.combine(dayOfYear)
+        return hasher.finalize()
+    }
+
     private func lifeGoalScheduleSignature(for goals: [LifeGoal], daySeed: Int) -> Int {
         var hasher = Hasher()
         hasher.combine(daySeed)
@@ -725,6 +877,17 @@ final class AppNotificationService: NSObject, UNUserNotificationCenterDelegate {
                 Observability.notificationsLogger,
                 "Notification tap routed to life goals."
             )
+        } else if let reminderID = reminderID(from: userInfo) {
+            stateQueue.sync {
+                pendingReminderID = reminderID
+            }
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .openReminderDetail, object: reminderID)
+            }
+            Observability.debug(
+                Observability.notificationsLogger,
+                "Notification tap routed to reminder: \(reminderID.uuidString)"
+            )
         }
 
         completionHandler()
@@ -752,10 +915,20 @@ final class AppNotificationService: NSObject, UNUserNotificationCenterDelegate {
         }
         return type == lifeGoalUserInfoTypeValue
     }
+
+    private func reminderID(from userInfo: [AnyHashable: Any]) -> UUID? {
+        guard let type = userInfo[quoteUserInfoTypeKey] as? String,
+              type == reminderUserInfoTypeValue,
+              let reminderIDText = userInfo[reminderUserInfoIDKey] as? String else {
+            return nil
+        }
+        return UUID(uuidString: reminderIDText)
+    }
 }
 
 extension Notification.Name {
     static let openQuoteMessage = Notification.Name("leerraum.openQuoteMessage")
     static let openHabitsTracking = Notification.Name("leerraum.openHabitsTracking")
     static let openLifeGoalsTracking = Notification.Name("leerraum.openLifeGoalsTracking")
+    static let openReminderDetail = Notification.Name("leerraum.openReminderDetail")
 }

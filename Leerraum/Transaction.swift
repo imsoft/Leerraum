@@ -973,3 +973,28 @@ final class NoteEntry {
         self.category = category
     }
 }
+
+@Model
+final class Reminder {
+    @Attribute(.unique) var id: UUID
+    var title: String
+    var note: String
+    var isCompleted: Bool
+    var completedAt: Date?
+    var createdAt: Date
+
+    init(
+        title: String,
+        note: String = "",
+        isCompleted: Bool = false,
+        completedAt: Date? = nil,
+        createdAt: Date = .now
+    ) {
+        self.id = UUID()
+        self.title = title
+        self.note = note
+        self.isCompleted = isCompleted
+        self.completedAt = completedAt
+        self.createdAt = createdAt
+    }
+}

@@ -257,9 +257,17 @@ struct HabitsView: View {
 
     private func entry(for habit: Habit, on date: Date) -> HabitEntry? {
         let targetDate = calendar.startOfDay(for: date)
-        return habit.entries.first {
-            calendar.isDate($0.date, inSameDayAs: targetDate)
-        }
+        let nextDate = calendar.date(byAdding: .day, value: 1, to: targetDate)!
+        let habitID = habit.persistentModelID
+        var descriptor = FetchDescriptor<HabitEntry>(
+            predicate: #Predicate<HabitEntry> {
+                $0.habit?.persistentModelID == habitID &&
+                $0.date >= targetDate &&
+                $0.date < nextDate
+            }
+        )
+        descriptor.fetchLimit = 1
+        return try? modelContext.fetch(descriptor).first
     }
 }
 
