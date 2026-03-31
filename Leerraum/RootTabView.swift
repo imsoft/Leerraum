@@ -29,6 +29,7 @@ private enum MoreDestination: String, CaseIterable, Identifiable {
     case habits
     case reminders
     case notes
+    case contentIdeas
     case paletteCatalog
     case bodyMeasurements
     case recommendations
@@ -46,6 +47,8 @@ private enum MoreDestination: String, CaseIterable, Identifiable {
             return "Recordatorios"
         case .notes:
             return "Notas"
+        case .contentIdeas:
+            return "Ideas de contenido"
         case .paletteCatalog:
             return "Paleta de colores"
         case .bodyMeasurements:
@@ -69,6 +72,8 @@ private enum MoreDestination: String, CaseIterable, Identifiable {
             return "Tareas pendientes con notificaciones aleatorias."
         case .notes:
             return "Guarda notas por categoria y color."
+        case .contentIdeas:
+            return "Guarda ideas para videos, posts y guiones."
         case .paletteCatalog:
             return "Consulta colores activos y reservados."
         case .bodyMeasurements:
@@ -92,6 +97,8 @@ private enum MoreDestination: String, CaseIterable, Identifiable {
             return "bell.badge"
         case .notes:
             return "note.text"
+        case .contentIdeas:
+            return "sparkles"
         case .paletteCatalog:
             return "paintpalette"
         case .bodyMeasurements:
@@ -115,6 +122,8 @@ private enum MoreDestination: String, CaseIterable, Identifiable {
             return AppPalette.Reminders.c700
         case .notes:
             return AppPalette.Notes.c700
+        case .contentIdeas:
+            return AppPalette.ContentIdeas.c700
         case .paletteCatalog:
             return AppPalette.Blue.c700
         case .bodyMeasurements:
@@ -573,6 +582,8 @@ private struct MoreHubView: View {
                 .onDisappear { deepLinkedReminderID = nil }
         case .notes:
             NotesView()
+        case .contentIdeas:
+            ContentIdeasView()
         case .paletteCatalog:
             PaletteCatalogView()
         case .bodyMeasurements:

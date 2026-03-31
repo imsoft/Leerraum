@@ -53,6 +53,11 @@ struct FeatureGradientPalette {
         light: [AppPalette.Reminders.c50, AppPalette.Reminders.c100, AppPalette.Reminders.c200],
         dark: [AppPalette.Reminders.c950, AppPalette.Reminders.c900, AppPalette.Reminders.c800]
     )
+
+    static let contentIdeas = FeatureGradientPalette(
+        light: [AppPalette.ContentIdeas.c50, AppPalette.ContentIdeas.c100, AppPalette.ContentIdeas.c200],
+        dark: [AppPalette.ContentIdeas.c950, AppPalette.ContentIdeas.c900, AppPalette.ContentIdeas.c800]
+    )
 }
 
 struct FeatureGradientBackground: View {

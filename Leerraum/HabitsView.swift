@@ -66,6 +66,8 @@ struct HabitsView: View {
     @State private var showingAddSheet = false
     @State private var editTarget: HabitEditTarget?
     @State private var calendarTarget: HabitCalendarTarget?
+    /// Día para el que marcas Sí/No en la lista (puede ser ayer u otro día pasado).
+    @State private var trackingDate: Date = Calendar.current.startOfDay(for: .now)
 
     private let calendar = Calendar.current
 
@@ -73,15 +75,38 @@ struct HabitsView: View {
         habits.filter(\.isActive)
     }
 
+    private var trackingDayStart: Date {
+        calendar.startOfDay(for: trackingDate)
+    }
+
+    private var trackingDayShortLabel: String {
+        if calendar.isDateInToday(trackingDate) {
+            return "Hoy"
+        }
+        return trackingDate.formatted(
+            .dateTime
+                .locale(Locale(identifier: "es_MX"))
+                .day()
+                .month(.abbreviated)
+        )
+        .capitalized
+    }
+
+    private var trackingDatePickerRange: ClosedRange<Date> {
+        let end = calendar.startOfDay(for: .now)
+        let start = calendar.date(byAdding: .year, value: -5, to: end) ?? end
+        return start...end
+    }
+
     private var completedTodayCount: Int {
         activeHabits.reduce(0) { partial, habit in
-            partial + (statusForDate(habit, on: .now) == .completed ? 1 : 0)
+            partial + (statusForDate(habit, on: trackingDayStart) == .completed ? 1 : 0)
         }
     }
 
     private var missedTodayCount: Int {
         activeHabits.reduce(0) { partial, habit in
-            partial + (statusForDate(habit, on: .now) == .missed ? 1 : 0)
+            partial + (statusForDate(habit, on: trackingDayStart) == .missed ? 1 : 0)
         }
     }
 
@@ -102,12 +127,19 @@ struct HabitsView: View {
 
                 ScrollView(showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 14) {
+                        HabitsTrackingDayCard(
+                            trackingDate: $trackingDate,
+                            dateRange: trackingDatePickerRange,
+                            dayLabel: trackingDayShortLabel
+                        )
+
                         HabitsSummaryCard(
                             totalHabits: habits.count,
                             activeHabits: activeHabits.count,
                             completedToday: completedTodayCount,
                             pendingToday: pendingTodayCount,
-                            completionRate: completionRateToday
+                            completionRate: completionRateToday,
+                            dayContextLabel: trackingDayShortLabel
                         )
 
                         FeatureSectionHeader(title: "Tus habitos") {
@@ -130,12 +162,13 @@ struct HabitsView: View {
                                 ForEach(habits, id: \.id) { habit in
                                     HabitRow(
                                         habit: habit,
-                                        todayStatus: statusForDate(habit, on: .now),
+                                        dayLabel: trackingDayShortLabel,
+                                        todayStatus: statusForDate(habit, on: trackingDayStart),
                                         onMarkCompleted: {
-                                            setStatus(.completed, for: habit, on: .now)
+                                            setStatus(.completed, for: habit, on: trackingDayStart)
                                         },
                                         onMarkMissed: {
-                                            setStatus(.missed, for: habit, on: .now)
+                                            setStatus(.missed, for: habit, on: trackingDayStart)
                                         },
                                         onOpenCalendar: {
                                             calendarTarget = HabitCalendarTarget(id: habit.id)
@@ -181,6 +214,12 @@ struct HabitsView: View {
                 if let selectedHabit = habits.first(where: { $0.id == target.id }) {
                     HabitCalendarView(habit: selectedHabit) { date in
                         statusForDate(selectedHabit, on: date)
+                    } onSetStatus: { date, status in
+                        if let status {
+                            setStatus(status, for: selectedHabit, on: date)
+                        } else {
+                            clearStatus(for: selectedHabit, on: date)
+                        }
                     }
                 } else {
                     NavigationStack {
@@ -250,6 +289,14 @@ struct HabitsView: View {
         }
     }
 
+    private func clearStatus(for habit: Habit, on date: Date) {
+        let targetDate = calendar.startOfDay(for: date)
+        guard let existing = entry(for: habit, on: targetDate) else { return }
+        withAnimation(.easeInOut(duration: 0.2)) {
+            modelContext.delete(existing)
+        }
+    }
+
     private func statusForDate(_ habit: Habit, on date: Date) -> HabitDailyStatus? {
         guard let currentEntry = entry(for: habit, on: date) else { return nil }
         return currentEntry.didComplete ? .completed : .missed
@@ -277,6 +324,61 @@ private struct HabitsBackgroundView: View {
     }
 }
 
+/// Selector del día para marcar hábitos en la lista (hoy, ayer, etc.).
+private struct HabitsTrackingDayCard: View {
+    @Binding var trackingDate: Date
+    let dateRange: ClosedRange<Date>
+    let dayLabel: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Día del registro")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.appTextPrimary)
+                    Text("Elige la fecha y usa Si/No abajo, o toca un día en el calendario del hábito.")
+                        .font(.caption)
+                        .foregroundStyle(Color.appTextSecondary)
+                }
+                Spacer(minLength: 8)
+                Button("Hoy") {
+                    trackingDate = Calendar.current.startOfDay(for: .now)
+                }
+                .font(.caption.weight(.semibold))
+                .buttonStyle(.bordered)
+                .tint(AppPalette.Habits.c600)
+            }
+
+            HStack {
+                Text("Fecha")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(Color.appTextSecondary)
+                Spacer()
+                DatePicker(
+                    "",
+                    selection: $trackingDate,
+                    in: dateRange,
+                    displayedComponents: .date
+                )
+                .labelsHidden()
+                .tint(AppPalette.Habits.c600)
+            }
+
+            Text("Seleccionado: \(dayLabel)")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(AppPalette.Habits.c700)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.appSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.appStrokeSoft, lineWidth: 1)
+        )
+    }
+}
+
 private struct HabitsSummaryCard: View {
     @Environment(\.colorScheme) private var colorScheme
 
@@ -285,6 +387,8 @@ private struct HabitsSummaryCard: View {
     let completedToday: Int
     let pendingToday: Int
     let completionRate: Int
+    /// "Hoy" o "26 mar" para el texto del porcentaje.
+    let dayContextLabel: String
 
     private var gradientColors: [Color] {
         if colorScheme == .dark {
@@ -304,7 +408,7 @@ private struct HabitsSummaryCard: View {
                 Text("\(completionRate)%")
                     .font(.system(size: 40, weight: .heavy, design: .rounded))
                     .foregroundStyle(.white)
-                Text("hoy")
+                Text(dayContextLabel.lowercased())
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.white.opacity(0.92))
             }
@@ -390,6 +494,7 @@ private struct HabitsEmptyStateCard: View {
 
 private struct HabitRow: View {
     let habit: Habit
+    let dayLabel: String
     let todayStatus: HabitDailyStatus?
     let onMarkCompleted: () -> Void
     let onMarkMissed: () -> Void
@@ -408,11 +513,11 @@ private struct HabitRow: View {
     private var statusText: String {
         switch todayStatus {
         case .completed:
-            return "Hoy: cumplido"
+            return "\(dayLabel): cumplido"
         case .missed:
-            return "Hoy: no cumplido"
+            return "\(dayLabel): no cumplido"
         case nil:
-            return "Hoy: sin registro"
+            return "\(dayLabel): sin registro"
         }
     }
 
@@ -748,17 +853,36 @@ private struct HabitsFormCard<Content: View>: View {
 private struct HabitCalendarView: View {
     let habit: Habit
     let statusForDate: (Date) -> HabitDailyStatus?
+    let onSetStatus: (Date, HabitDailyStatus?) -> Void
 
     @State private var visibleMonth: Date
+    @State private var selectedCalendarDay: Date?
     @Environment(\.colorScheme) private var colorScheme
 
     private let calendar = Calendar.current
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 7)
 
-    init(habit: Habit, statusForDate: @escaping (Date) -> HabitDailyStatus?) {
+    init(
+        habit: Habit,
+        statusForDate: @escaping (Date) -> HabitDailyStatus?,
+        onSetStatus: @escaping (Date, HabitDailyStatus?) -> Void
+    ) {
         self.habit = habit
         self.statusForDate = statusForDate
+        self.onSetStatus = onSetStatus
         _visibleMonth = State(initialValue: HabitCalendarMath.startOfMonth(for: .now))
+    }
+
+    private var selectedDayTitle: String {
+        guard let selectedCalendarDay else { return "" }
+        return selectedCalendarDay.formatted(
+            .dateTime
+                .locale(Locale(identifier: "es_MX"))
+                .weekday(.wide)
+                .day()
+                .month(.wide)
+        )
+        .capitalized
     }
 
     private var monthTitle: String {
@@ -806,7 +930,7 @@ private struct HabitCalendarView: View {
                             .font(.title3.weight(.bold))
                             .foregroundStyle(Color.appTextPrimary)
                             .lineLimit(2)
-                        Text("Progreso por calendario")
+                        Text("Toca un día para registrar o editar (pasado y hoy).")
                             .font(.subheadline)
                             .foregroundStyle(Color.appTextSecondary)
                     }
@@ -853,12 +977,17 @@ private struct HabitCalendarView: View {
                         LazyVGrid(columns: columns, spacing: 6) {
                             ForEach(monthDays.indices, id: \.self) { index in
                                 let date = monthDays[index]
+                                let isFutureDay = date.map { calendar.startOfDay(for: $0) > calendar.startOfDay(for: .now) } ?? false
                                 HabitCalendarDayCell(
                                     date: date,
                                     status: date.map(statusForDate) ?? nil,
                                     isToday: date.map { calendar.isDateInToday($0) } ?? false,
-                                    isFuture: date.map { calendar.startOfDay(for: $0) > calendar.startOfDay(for: .now) } ?? false,
-                                    isDarkMode: colorScheme == .dark
+                                    isFuture: isFutureDay,
+                                    isDarkMode: colorScheme == .dark,
+                                    onTap: {
+                                        guard let d = date, !isFutureDay else { return }
+                                        selectedCalendarDay = d
+                                    }
                                 )
                             }
                         }
@@ -869,6 +998,38 @@ private struct HabitCalendarView: View {
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
                             .stroke(Color.appStrokeSoft, lineWidth: 1)
                     )
+                    .confirmationDialog(
+                        selectedDayTitle,
+                        isPresented: Binding(
+                            get: { selectedCalendarDay != nil },
+                            set: { if !$0 { selectedCalendarDay = nil } }
+                        ),
+                        titleVisibility: .visible
+                    ) {
+                        Button("Cumplido") {
+                            if let d = selectedCalendarDay {
+                                onSetStatus(d, .completed)
+                            }
+                            selectedCalendarDay = nil
+                        }
+                        Button("No cumplido") {
+                            if let d = selectedCalendarDay {
+                                onSetStatus(d, .missed)
+                            }
+                            selectedCalendarDay = nil
+                        }
+                        if let d = selectedCalendarDay, statusForDate(d) != nil {
+                            Button("Quitar registro", role: .destructive) {
+                                onSetStatus(d, nil)
+                                selectedCalendarDay = nil
+                            }
+                        }
+                        Button("Cancelar", role: .cancel) {
+                            selectedCalendarDay = nil
+                        }
+                    } message: {
+                        Text("Elige el estado para ese día.")
+                    }
 
                     HStack(spacing: 8) {
                         HabitCalendarLegendItem(
@@ -965,6 +1126,7 @@ private struct HabitCalendarDayCell: View {
     let isToday: Bool
     let isFuture: Bool
     let isDarkMode: Bool
+    let onTap: () -> Void
 
     private var backgroundColor: Color {
         if let status {
@@ -999,21 +1161,26 @@ private struct HabitCalendarDayCell: View {
     var body: some View {
         Group {
             if let date {
-                Text("\(Calendar.current.component(.day, from: date))")
-                    .font(.caption.weight(isToday ? .bold : .semibold))
-                    .foregroundStyle(textColor)
-                    .frame(maxWidth: .infinity, minHeight: 34)
-                    .background(
-                        backgroundColor,
-                        in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(
-                                isToday ? AppPalette.Habits.c500 : Color.clear,
-                                lineWidth: isToday ? 1.5 : 0
-                            )
-                    )
+                Button(action: onTap) {
+                    Text("\(Calendar.current.component(.day, from: date))")
+                        .font(.caption.weight(isToday ? .bold : .semibold))
+                        .foregroundStyle(textColor)
+                        .frame(maxWidth: .infinity, minHeight: 34)
+                        .background(
+                            backgroundColor,
+                            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .stroke(
+                                    isToday ? AppPalette.Habits.c500 : Color.clear,
+                                    lineWidth: isToday ? 1.5 : 0
+                                )
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(isFuture)
+                .opacity(isFuture ? 0.45 : 1)
             } else {
                 Color.clear
                     .frame(maxWidth: .infinity, minHeight: 34)

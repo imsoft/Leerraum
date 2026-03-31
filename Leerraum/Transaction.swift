@@ -840,6 +840,37 @@ final class AppIdeaNote {
 }
 
 @Model
+final class ContentIdeaEntry {
+    @Attribute(.unique) var id: UUID
+    var title: String
+    var detail: String
+    var tagsRaw: String
+    var platform: String
+    var isPinned: Bool
+    var createdAt: Date
+    var updatedAt: Date
+
+    init(
+        title: String,
+        detail: String = "",
+        tagsRaw: String = "",
+        platform: String = "",
+        isPinned: Bool = false,
+        createdAt: Date = .now,
+        updatedAt: Date = .now
+    ) {
+        self.id = UUID()
+        self.title = title
+        self.detail = detail
+        self.tagsRaw = tagsRaw
+        self.platform = platform
+        self.isPinned = isPinned
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+}
+
+@Model
 final class LifeGoal {
     @Attribute(.unique) var id: UUID
     var title: String

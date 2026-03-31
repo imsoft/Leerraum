@@ -36,6 +36,7 @@ struct LeerraumApp: App {
             NoteCategory.self,
             NoteEntry.self,
             AppIdeaNote.self,
+            ContentIdeaEntry.self,
             LifeGoal.self,
             Reminder.self
         ])
