@@ -133,6 +133,47 @@ enum FoodMealType: String, CaseIterable, Identifiable, Codable {
     }
 }
 
+enum FoodQualityType: String, CaseIterable, Identifiable, Codable {
+    case healthy = "healthy"
+    case medium = "medium"
+    case junk = "junk"
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .healthy:
+            return "Saludable"
+        case .medium:
+            return "Medio"
+        case .junk:
+            return "Chatarra"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .healthy:
+            return "leaf.fill"
+        case .medium:
+            return "equal.circle.fill"
+        case .junk:
+            return "takeoutbag.and.cup.and.straw.fill"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .healthy:
+            return Color(red: 0.11, green: 0.62, blue: 0.36)
+        case .medium:
+            return Color(red: 0.95, green: 0.58, blue: 0.20)
+        case .junk:
+            return Color(red: 0.87, green: 0.26, blue: 0.24)
+        }
+    }
+}
+
 enum LifeGoalPriority: String, CaseIterable, Identifiable, Codable {
     case high = "high"
     case medium = "medium"
@@ -645,6 +686,7 @@ final class FoodEntry {
     var name: String
     var mealTypeRaw: String
     var quantity: String
+    var qualityRaw: String?
     var calories: Int
     var proteinGrams: Double?
     var note: String
@@ -655,6 +697,7 @@ final class FoodEntry {
         name: String,
         mealType: FoodMealType,
         quantity: String = "",
+        quality: FoodQualityType = .medium,
         calories: Int = 0,
         proteinGrams: Double? = nil,
         note: String = "",
@@ -665,6 +708,7 @@ final class FoodEntry {
         self.name = name
         self.mealTypeRaw = mealType.rawValue
         self.quantity = quantity
+        self.qualityRaw = quality.rawValue
         self.calories = calories
         self.proteinGrams = proteinGrams
         self.note = note
@@ -675,6 +719,62 @@ final class FoodEntry {
     var mealType: FoodMealType {
         get { FoodMealType(rawValue: mealTypeRaw) ?? .snack }
         set { mealTypeRaw = newValue.rawValue }
+    }
+
+    var quality: FoodQualityType {
+        get { FoodQualityType(rawValue: qualityRaw ?? "") ?? .medium }
+        set { qualityRaw = newValue.rawValue }
+    }
+}
+
+/// Horario sugerido de comida o toma de agua (configurable en datos; se crean valores por defecto al instalar).
+@Model
+final class MealWaterRoutineSlot {
+    @Attribute(.unique) var id: UUID
+    var title: String
+    var hour: Int
+    var minute: Int
+    var isWater: Bool
+    var sortOrder: Int
+    var isEnabled: Bool
+
+    init(
+        title: String,
+        hour: Int,
+        minute: Int,
+        isWater: Bool,
+        sortOrder: Int,
+        isEnabled: Bool = true
+    ) {
+        self.id = UUID()
+        self.title = title
+        self.hour = max(0, min(hour, 23))
+        self.minute = max(0, min(minute, 59))
+        self.isWater = isWater
+        self.sortOrder = sortOrder
+        self.isEnabled = isEnabled
+    }
+
+    var timeString: String {
+        String(format: "%02d:%02d", hour, minute)
+    }
+}
+
+/// Marca si un horario se cumplio en un dia concreto (inicio de dia en calendario actual).
+@Model
+final class MealWaterRoutineDayMark {
+    var id: UUID
+    var slotId: UUID
+    var dayStart: Date
+    var isDone: Bool
+    var updatedAt: Date
+
+    init(slotId: UUID, dayStart: Date, isDone: Bool, updatedAt: Date = .now) {
+        self.id = UUID()
+        self.slotId = slotId
+        self.dayStart = dayStart
+        self.isDone = isDone
+        self.updatedAt = updatedAt
     }
 }
 

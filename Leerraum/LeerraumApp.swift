@@ -38,7 +38,9 @@ struct LeerraumApp: App {
             AppIdeaNote.self,
             ContentIdeaEntry.self,
             LifeGoal.self,
-            Reminder.self
+            Reminder.self,
+            MealWaterRoutineSlot.self,
+            MealWaterRoutineDayMark.self
         ])
     }
 }
@@ -55,6 +57,7 @@ final class AppNotificationService: NSObject, UNUserNotificationCenterDelegate {
     private let habitReminderIDPrefix = "habits.daily."
     private let lifeGoalReminderIDPrefix = "lifegoals.daily."
     private let reminderIDPrefix = "reminders.random."
+    private let mealWaterReminderIDPrefix = "foodwater.daily."
     private let quoteUserInfoTypeKey = "leerraumNotificationType"
     private let quoteUserInfoTypeValue = "quoteMessage"
     private let habitUserInfoTypeValue = "habitSummary"
@@ -75,6 +78,8 @@ final class AppNotificationService: NSObject, UNUserNotificationCenterDelegate {
     private var lastLifeGoalScheduleDate: Date?
     private var lastReminderScheduleSignature: Int?
     private var lastReminderScheduleDate: Date?
+    private var lastMealWaterScheduleSignature: Int?
+    private var lastMealWaterScheduleDate: Date?
 
     private override init() {
         super.init()
@@ -418,6 +423,68 @@ final class AppNotificationService: NSObject, UNUserNotificationCenterDelegate {
                 Observability.debug(
                     Observability.notificationsLogger,
                     "Scheduled \(reminderRequests.count) reminder notifications."
+                )
+            }
+        }
+    }
+
+    func scheduleMealWaterRoutineReminders(slots: [MealWaterRoutineSlot]) {
+        configure()
+
+        let activeSlots = slots.filter {
+            $0.isEnabled && !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        let signature = mealWaterScheduleSignature(for: activeSlots)
+        let shouldSkip = stateQueue.sync { () -> Bool in
+            guard let lastMealWaterScheduleSignature, let lastMealWaterScheduleDate else { return false }
+            let isSameSignature = lastMealWaterScheduleSignature == signature
+            let wasScheduledRecently = Date().timeIntervalSince(lastMealWaterScheduleDate) < 10
+            return isSameSignature && wasScheduledRecently
+        }
+        if shouldSkip {
+            Observability.debug(
+                Observability.notificationsLogger,
+                "Skipped meal/water scheduling because signature did not change recently."
+            )
+            return
+        }
+
+        requestAuthorizationIfNeeded { [weak self] granted in
+            guard granted, let self else { return }
+
+            self.center.getPendingNotificationRequests { [weak self] requests in
+                guard let self else { return }
+                let interval = Observability.notificationSignposter.beginInterval("mealwater.schedule.pendingRequests")
+                defer { Observability.notificationSignposter.endInterval("mealwater.schedule.pendingRequests", interval) }
+
+                let existingIDs = requests
+                    .map(\.identifier)
+                    .filter { $0.hasPrefix(self.mealWaterReminderIDPrefix) }
+                if !existingIDs.isEmpty {
+                    self.center.removePendingNotificationRequests(withIdentifiers: existingIDs)
+                }
+
+                guard !activeSlots.isEmpty else {
+                    self.stateQueue.sync {
+                        self.lastMealWaterScheduleSignature = nil
+                        self.lastMealWaterScheduleDate = nil
+                    }
+                    return
+                }
+
+                let nonMealWaterPendingCount = max(0, requests.count - existingIDs.count)
+                let availableSlots = max(0, self.maxPendingNotificationRequests - nonMealWaterPendingCount)
+                guard availableSlots > 0 else { return }
+
+                let reminderRequests = self.mealWaterReminderRequests(slots: activeSlots, maxCount: availableSlots)
+                reminderRequests.forEach { self.center.add($0) }
+                self.stateQueue.sync {
+                    self.lastMealWaterScheduleSignature = signature
+                    self.lastMealWaterScheduleDate = Date()
+                }
+                Observability.debug(
+                    Observability.notificationsLogger,
+                    "Scheduled \(reminderRequests.count) meal/water reminders."
                 )
             }
         }
@@ -779,6 +846,40 @@ final class AppNotificationService: NSObject, UNUserNotificationCenterDelegate {
         return allRequests
     }
 
+    private func mealWaterReminderRequests(
+        slots: [MealWaterRoutineSlot],
+        maxCount: Int
+    ) -> [UNNotificationRequest] {
+        let interval = Observability.notificationSignposter.beginInterval("mealWaterReminderRequests")
+        defer { Observability.notificationSignposter.endInterval("mealWaterReminderRequests", interval) }
+        guard !slots.isEmpty, maxCount > 0 else { return [] }
+
+        let sortedSlots = slots.sorted { lhs, rhs in
+            if lhs.sortOrder != rhs.sortOrder { return lhs.sortOrder < rhs.sortOrder }
+            if lhs.hour != rhs.hour { return lhs.hour < rhs.hour }
+            if lhs.minute != rhs.minute { return lhs.minute < rhs.minute }
+            return lhs.id.uuidString < rhs.id.uuidString
+        }
+
+        let selectedSlots = Array(sortedSlots.prefix(maxCount))
+        return selectedSlots.map { slot in
+            let triggerComponents = DateComponents(hour: slot.hour, minute: slot.minute, second: 0)
+            let trigger = UNCalendarNotificationTrigger(
+                dateMatching: triggerComponents,
+                repeats: true
+            )
+
+            let content = UNMutableNotificationContent()
+            content.title = slot.isWater ? "Hora de tomar agua" : "Hora de comer"
+            content.subtitle = slot.title
+            content.body = "Son las \(slot.timeString). Marca tu progreso en Leerraum."
+            content.sound = UNNotificationSound(named: customSoundName)
+
+            let identifier = "\(mealWaterReminderIDPrefix)\(slot.id.uuidString)"
+            return UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
+        }
+    }
+
     private func reminderScheduleSignature(for reminders: [Reminder]) -> Int {
         var hasher = Hasher()
         for reminder in reminders.sorted(by: { $0.id.uuidString < $1.id.uuidString }) {
@@ -789,6 +890,20 @@ final class AppNotificationService: NSObject, UNUserNotificationCenterDelegate {
         // Include day so postponed text refreshes daily
         let dayOfYear = calendar.ordinality(of: .day, in: .year, for: Date()) ?? 0
         hasher.combine(dayOfYear)
+        return hasher.finalize()
+    }
+
+    private func mealWaterScheduleSignature(for slots: [MealWaterRoutineSlot]) -> Int {
+        var hasher = Hasher()
+        for slot in slots.sorted(by: { $0.id.uuidString < $1.id.uuidString }) {
+            hasher.combine(slot.id)
+            hasher.combine(slot.title)
+            hasher.combine(slot.hour)
+            hasher.combine(slot.minute)
+            hasher.combine(slot.isEnabled)
+            hasher.combine(slot.isWater)
+            hasher.combine(slot.sortOrder)
+        }
         return hasher.finalize()
     }
 
@@ -928,6 +1043,7 @@ final class AppNotificationService: NSObject, UNUserNotificationCenterDelegate {
 }
 
 extension Notification.Name {
+    static let leerraumRefreshWidgetSnapshot = Notification.Name("leerraum.refreshWidgetSnapshot")
     static let openQuoteMessage = Notification.Name("leerraum.openQuoteMessage")
     static let openHabitsTracking = Notification.Name("leerraum.openHabitsTracking")
     static let openLifeGoalsTracking = Notification.Name("leerraum.openLifeGoalsTracking")

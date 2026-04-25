@@ -53,6 +53,7 @@ struct LeerraumSummaryWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: LeerraumWidgetProvider()) { entry in
             LeerraumSummaryWidgetView(entry: entry)
+                .widgetURL(URL(string: "leerraum://home"))
         }
         .configurationDisplayName("Leerraum")
         .description("Resumen rapido para abrir tus secciones de Leerraum.")
@@ -92,7 +93,7 @@ private struct LeerraumSummaryWidgetView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(14)
-        .widgetBackground(widgetGradient)
+        .leerraumWidgetBackground(widgetGradient)
     }
 
     private var mediumView: some View {
@@ -129,7 +130,7 @@ private struct LeerraumSummaryWidgetView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(14)
-        .widgetBackground(widgetGradient)
+        .leerraumWidgetBackground(widgetGradient)
     }
 
     private var widgetGradient: LinearGradient {
@@ -157,15 +158,3 @@ private struct LeerraumSummaryWidgetView: View {
     }
 }
 
-private extension View {
-    @ViewBuilder
-    func widgetBackground(_ backgroundView: some View) -> some View {
-        if #available(iOSApplicationExtension 17.0, *) {
-            containerBackground(for: .widget) {
-                backgroundView
-            }
-        } else {
-            background(backgroundView)
-        }
-    }
-}

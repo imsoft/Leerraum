@@ -149,16 +149,29 @@ struct RootTabView: View {
     @State private var lifeGoalSchedulingTask: Task<Void, Never>?
     @State private var quoteSchedulingTask: Task<Void, Never>?
     @State private var reminderSchedulingTask: Task<Void, Never>?
+    @State private var mealWaterSchedulingTask: Task<Void, Never>?
     @State private var lastHabitSchedulingSignature: Int?
     @State private var lastLifeGoalSchedulingSignature: Int?
     @State private var lastQuoteSchedulingSignature: Int?
     @State private var lastReminderSchedulingSignature: Int?
+    @State private var lastMealWaterSchedulingSignature: Int?
     @State private var deepLinkedReminderID: UUID?
     @Environment(\.scenePhase) private var scenePhase
     @Query(sort: \Habit.createdAt, order: .reverse) private var habits: [Habit]
     @Query(sort: \LifeGoal.createdAt, order: .reverse) private var lifeGoals: [LifeGoal]
     @Query(sort: \QuoteMessage.createdAt, order: .reverse) private var quotes: [QuoteMessage]
     @Query(sort: \Reminder.createdAt, order: .reverse) private var reminders: [Reminder]
+    @Query(sort: \FoodEntry.date, order: .reverse) private var foodEntries: [FoodEntry]
+    @Query(
+        sort: [
+            SortDescriptor(\MealWaterRoutineSlot.sortOrder, order: .forward),
+            SortDescriptor(\MealWaterRoutineSlot.hour, order: .forward),
+            SortDescriptor(\MealWaterRoutineSlot.minute, order: .forward)
+        ]
+    )
+    private var routineSlots: [MealWaterRoutineSlot]
+    @Query(sort: \MealWaterRoutineDayMark.updatedAt, order: .reverse) private var routineMarks: [MealWaterRoutineDayMark]
+    @Environment(\.modelContext) private var modelContext
     @AppStorage(AppStorageKey.themeMode) private var themeModeRawValue = AppThemeMode.system.rawValue
 
     private var selectedThemeMode: AppThemeMode {
@@ -231,6 +244,72 @@ struct RootTabView: View {
         return hasher.finalize()
     }
 
+    private var mealWaterNotificationSignature: Int {
+        var hasher = Hasher()
+        for slot in routineSlots {
+            hasher.combine(slot.id)
+            hasher.combine(slot.title)
+            hasher.combine(slot.hour)
+            hasher.combine(slot.minute)
+            hasher.combine(slot.isEnabled)
+            hasher.combine(slot.isWater)
+            hasher.combine(slot.sortOrder)
+        }
+        return hasher.finalize()
+    }
+
+    /// Firma de comidas recientes para refrescar datos del widget sin recorrer toda la base.
+    private var widgetFoodSignature: Int {
+        var hasher = Hasher()
+        for entry in foodEntries.prefix(160) {
+            hasher.combine(entry.id)
+            hasher.combine(entry.date)
+            hasher.combine(entry.name)
+            hasher.combine(entry.quality.rawValue)
+            hasher.combine(entry.mealType.rawValue)
+        }
+        return hasher.finalize()
+    }
+
+    private var widgetRoutineSignature: Int {
+        var hasher = Hasher()
+        for slot in routineSlots {
+            hasher.combine(slot.id)
+            hasher.combine(slot.hour)
+            hasher.combine(slot.minute)
+            hasher.combine(slot.isEnabled)
+            hasher.combine(slot.title)
+            hasher.combine(slot.isWater)
+            hasher.combine(slot.sortOrder)
+        }
+        let today = Calendar.current.startOfDay(for: Date())
+        for mark in routineMarks where Calendar.current.isDate(mark.dayStart, inSameDayAs: today) {
+            hasher.combine(mark.slotId)
+            hasher.combine(mark.isDone)
+            hasher.combine(mark.updatedAt)
+        }
+        return hasher.finalize()
+    }
+
+    private var widgetSnapshotSignature: Int {
+        var hasher = Hasher()
+        hasher.combine(widgetFoodSignature)
+        hasher.combine(quoteNotificationSignature)
+        hasher.combine(lifeGoalNotificationSignature)
+        hasher.combine(widgetRoutineSignature)
+        return hasher.finalize()
+    }
+
+    private func refreshWidgetSnapshot() {
+        WidgetSnapshotWriter.refresh(
+            foodEntries: foodEntries,
+            quotes: quotes,
+            lifeGoals: lifeGoals,
+            routineSlots: routineSlots,
+            routineMarks: routineMarks
+        )
+    }
+
     var body: some View {
         TabView(selection: $selectedTab) {
             ContentView()
@@ -280,11 +359,14 @@ struct RootTabView: View {
             scheduleLifeGoalRemindersIfNeeded(force: true)
             scheduleQuoteRemindersIfNeeded(force: true)
             scheduleReminderNotificationsIfNeeded(force: true)
+            scheduleMealWaterRemindersIfNeeded(force: true)
             openPendingQuoteIfNeeded()
             openPendingHabitsIfNeeded()
             openPendingLifeGoalsIfNeeded()
             openPendingReminderIfNeeded()
             Observability.debug(Observability.appLogger, "RootTabView did appear.")
+            RoutineSlotSeeder.ensureDefaultRoutineSlotsIfNeeded(in: modelContext)
+            refreshWidgetSnapshot()
         }
         .onChange(of: scenePhase) { _, newPhase in
             guard newPhase == .active else { return }
@@ -295,11 +377,19 @@ struct RootTabView: View {
             scheduleLifeGoalRemindersIfNeeded()
             scheduleQuoteRemindersIfNeeded()
             scheduleReminderNotificationsIfNeeded()
+            scheduleMealWaterRemindersIfNeeded()
             openPendingQuoteIfNeeded()
             openPendingHabitsIfNeeded()
             openPendingLifeGoalsIfNeeded()
             openPendingReminderIfNeeded()
             Observability.debug(Observability.appLogger, "Scene became active; reminders refreshed.")
+            refreshWidgetSnapshot()
+        }
+        .onChange(of: widgetSnapshotSignature) { _, _ in
+            refreshWidgetSnapshot()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .leerraumRefreshWidgetSnapshot)) { _ in
+            refreshWidgetSnapshot()
         }
         .onChange(of: habitNotificationSignature) { _, _ in
             scheduleHabitRemindersIfNeeded()
@@ -313,11 +403,17 @@ struct RootTabView: View {
         .onChange(of: reminderNotificationSignature) { _, _ in
             scheduleReminderNotificationsIfNeeded()
         }
+        .onChange(of: mealWaterNotificationSignature) { _, _ in
+            scheduleMealWaterRemindersIfNeeded()
+        }
         .onChange(of: selectedTab) { _, newTab in
             Observability.debug(
                 Observability.navigationLogger,
                 "Tab selected: \(newTab.analyticsName)"
             )
+        }
+        .onOpenURL { url in
+            handleDeepLink(url)
         }
         .onReceive(NotificationCenter.default.publisher(for: .openQuoteMessage)) { notification in
             guard let quoteID = notification.object as? UUID else { return }
@@ -342,7 +438,46 @@ struct RootTabView: View {
             quoteSchedulingTask = nil
             reminderSchedulingTask?.cancel()
             reminderSchedulingTask = nil
+            mealWaterSchedulingTask?.cancel()
+            mealWaterSchedulingTask = nil
         }
+    }
+
+    private func handleDeepLink(_ url: URL) {
+        guard let link = LeerraumDeepLink(url: url) else {
+            Observability.debug(
+                Observability.navigationLogger,
+                "Deep link ignored (unknown URL): \(url.absoluteString)"
+            )
+            return
+        }
+        let interval = Observability.navigationSignposter.beginInterval("rootTab.deepLink")
+        defer { Observability.navigationSignposter.endInterval("rootTab.deepLink", interval) }
+
+        deepLinkedQuoteID = nil
+        deepLinkedReminderID = nil
+
+        switch link {
+        case .finance, .home:
+            selectedMoreDestination = nil
+            selectedTab = .finance
+        case .gym:
+            selectedMoreDestination = nil
+            selectedTab = .gym
+        case .food:
+            selectedMoreDestination = nil
+            selectedTab = .food
+        case .quotes:
+            selectedMoreDestination = nil
+            selectedTab = .quotes
+        case .lifeGoals:
+            openLifeGoalsTracking()
+        }
+
+        Observability.debug(
+            Observability.navigationLogger,
+            "Deep link applied: \(url.absoluteString) -> \(link)"
+        )
     }
 
     private func openQuote(with id: UUID) {
@@ -519,6 +654,30 @@ struct RootTabView: View {
                 "Running reminder scheduling task with \(reminders.count) reminders."
             )
             AppNotificationService.shared.scheduleRandomReminderNotifications(reminders: reminders)
+        }
+    }
+
+    private func scheduleMealWaterRemindersIfNeeded(force: Bool = false) {
+        if !force, lastMealWaterSchedulingSignature == mealWaterNotificationSignature {
+            Observability.debug(
+                Observability.notificationsLogger,
+                "Skipped meal/water scheduling in RootTabView: unchanged signature."
+            )
+            return
+        }
+        lastMealWaterSchedulingSignature = mealWaterNotificationSignature
+
+        mealWaterSchedulingTask?.cancel()
+        mealWaterSchedulingTask = Task {
+            let interval = Observability.notificationSignposter.beginInterval("rootTab.mealWaterSchedulingTask")
+            defer { Observability.notificationSignposter.endInterval("rootTab.mealWaterSchedulingTask", interval) }
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled else { return }
+            Observability.debug(
+                Observability.notificationsLogger,
+                "Running meal/water scheduling task with \(routineSlots.count) slots."
+            )
+            AppNotificationService.shared.scheduleMealWaterRoutineReminders(slots: routineSlots)
         }
     }
 }

@@ -2,44 +2,6 @@ import SwiftUI
 import SwiftData
 import OSLog
 
-private struct FoodGoalSummary {
-    let isTrainingDay: Bool
-    let targetCalories: Int
-    let targetProteinGrams: Int
-    let remainingCalories: Int
-    let remainingProteinGrams: Int
-    let sourceDescription: String
-}
-
-private struct FoodRecommendation: Identifiable {
-    let mealType: FoodMealType
-    let title: String
-    let calories: Int
-    let proteinGrams: Int
-    let reason: String
-
-    var id: String {
-        "\(mealType.rawValue)-\(title.lowercased())-\(reason.lowercased())"
-    }
-}
-
-private struct FoodHistoryAggregate {
-    let name: String
-    let usesCount: Int
-    let monthCount: Int
-    let usedYesterday: Bool
-    let lastDate: Date
-    let avgCalories: Int
-    let avgProteinGrams: Int
-}
-
-private struct FoodFallbackTemplate {
-    let mealType: FoodMealType
-    let name: String
-    let calories: Int
-    let proteinGrams: Int
-}
-
 private struct FoodEditTarget: Identifiable {
     let id: UUID
 }
@@ -47,30 +9,24 @@ private struct FoodEditTarget: Identifiable {
 struct FoodLogView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \FoodEntry.date, order: .reverse) private var entries: [FoodEntry]
-    @Query(sort: \GymSetRecord.performedAt, order: .reverse) private var setRecords: [GymSetRecord]
-    @Query(sort: \BodyMeasurementEntry.date, order: .reverse) private var bodyMeasurements: [BodyMeasurementEntry]
-    @AppStorage("food.goal.targetWeightKg") private var targetWeightStorage: Double = 0
-
+    @Query(
+        sort: [
+            SortDescriptor(\MealWaterRoutineSlot.sortOrder, order: .forward),
+            SortDescriptor(\MealWaterRoutineSlot.hour, order: .forward),
+            SortDescriptor(\MealWaterRoutineSlot.minute, order: .forward)
+        ]
+    )
+    private var routineSlots: [MealWaterRoutineSlot]
+    @Query(sort: \MealWaterRoutineDayMark.updatedAt, order: .reverse) private var routineMarks: [MealWaterRoutineDayMark]
     @State private var selectedDate = Date()
+    @State private var displayedMonth = Date()
     @State private var showingAddSheet = false
     @State private var editTarget: FoodEditTarget?
-    @State private var cachedRecommendationSections: [(FoodMealType, [FoodRecommendation])] = []
-    @State private var recommendationsRefreshTask: Task<Void, Never>?
 
     private var dayEntries: [FoodEntry] {
         entries
             .filter { Calendar.current.isDate($0.date, inSameDayAs: selectedDate) }
             .sorted { $0.date < $1.date }
-    }
-
-    private var totalCalories: Int {
-        dayEntries.map(\.calories).reduce(0, +)
-    }
-
-    private var totalProteinGrams: Int {
-        dayEntries.reduce(0) { partial, entry in
-            partial + Int((entry.proteinGrams ?? 0).rounded())
-        }
     }
 
     private var mealSections: [(FoodMealType, [FoodEntry])] {
@@ -80,72 +36,34 @@ struct FoodLogView: View {
         }
     }
 
-    private var latestBodyWeightKg: Double? {
-        bodyMeasurements.first(where: { ($0.weightKg ?? 0) > 0 })?.weightKg
+    private func qualityCount(for quality: FoodQualityType) -> Int {
+        dayEntries.filter { $0.quality == quality }.count
     }
 
-    private var currentTargetWeightKg: Double {
-        if targetWeightStorage > 0 {
-            return max(targetWeightStorage, 35)
-        }
-        if let latestBodyWeightKg {
-            return max(latestBodyWeightKg, 35)
-        }
-        return 75
+    private var routineDayStart: Date {
+        Calendar.current.startOfDay(for: selectedDate)
     }
 
-    private var isTrainingDay: Bool {
-        setRecords.contains {
-            Calendar.current.isDate($0.performedAt, inSameDayAs: selectedDate)
+    private var routineDoneBySlotId: [UUID: Bool] {
+        let cal = Calendar.current
+        var map: [UUID: Bool] = [:]
+        for mark in routineMarks where cal.isDate(mark.dayStart, inSameDayAs: routineDayStart) {
+            map[mark.slotId] = mark.isDone
         }
+        return map
     }
 
-    private var nutritionGoal: FoodGoalSummary {
-        let averageCalories = averageDailyCaloriesLast30Days(referenceDate: selectedDate)
-        let baselineCalories: Int
-        let sourceDescription: String
-        if averageCalories > 0 {
-            baselineCalories = Int((averageCalories * 0.88).rounded())
-            sourceDescription = "Meta por historial: -12% de promedio de 30 dias."
-        } else {
-            baselineCalories = Int((currentTargetWeightKg * 26).rounded())
-            sourceDescription = "Meta estimada por peso objetivo."
-        }
-
-        let workoutAdjusted = baselineCalories + (isTrainingDay ? 120 : -80)
-        let targetCalories = min(max(workoutAdjusted, 1400), 3800)
-        let targetProtein = max(Int((currentTargetWeightKg * 2.0).rounded()), 90)
-
-        return FoodGoalSummary(
-            isTrainingDay: isTrainingDay,
-            targetCalories: targetCalories,
-            targetProteinGrams: targetProtein,
-            remainingCalories: targetCalories - totalCalories,
-            remainingProteinGrams: targetProtein - totalProteinGrams,
-            sourceDescription: sourceDescription
-        )
+    private var enabledRoutineSlots: [MealWaterRoutineSlot] {
+        routineSlots.filter(\.isEnabled)
     }
 
-    private var recommendationSections: [(FoodMealType, [FoodRecommendation])] {
-        if cachedRecommendationSections.isEmpty {
-            return FoodMealType.allCases.map { mealType in
-                (mealType, recommendations(for: mealType))
-            }
-        }
-        return cachedRecommendationSections
+    private var calendarSummaryText: String {
+        let day = progressSnapshot(for: selectedDate)
+        return "Comidas \(day.doneMeals)/\(day.totalMeals) · Agua \(day.doneWater)/\(day.totalWater)"
     }
 
-    private var recommendationsRefreshSignature: Int {
-        var hasher = Hasher()
-        hasher.combine(Calendar.current.startOfDay(for: selectedDate))
-        hasher.combine(entries.count)
-        hasher.combine(setRecords.count)
-        hasher.combine(bodyMeasurements.count)
-        hasher.combine(Int((targetWeightStorage * 10).rounded()))
-        hasher.combine(entries.first?.id)
-        hasher.combine(setRecords.first?.id)
-        hasher.combine(bodyMeasurements.first?.id)
-        return hasher.finalize()
+    private var selectedDayProgress: DayRoutineProgress {
+        progressSnapshot(for: selectedDate)
     }
 
     var body: some View {
@@ -159,25 +77,41 @@ struct FoodLogView: View {
                         FoodSummaryCard(
                             selectedDate: selectedDate,
                             totalEntries: dayEntries.count,
-                            totalCalories: totalCalories,
-                            totalProteinGrams: totalProteinGrams
+                            healthyCount: qualityCount(for: .healthy),
+                            mediumCount: qualityCount(for: .medium),
+                            junkCount: qualityCount(for: .junk)
                         )
 
-                        FoodGoalCard(
-                            latestWeightKg: latestBodyWeightKg,
-                            targetWeightKg: currentTargetWeightKg,
-                            summary: nutritionGoal,
-                            onDecreaseTarget: { updateTargetWeight(by: -0.5) },
-                            onIncreaseTarget: { updateTargetWeight(by: 0.5) }
+                        FoodProgressCalendarCard(
+                            displayedMonth: $displayedMonth,
+                            selectedDate: $selectedDate,
+                            subtitle: calendarSummaryText,
+                            progressForDay: { day in
+                                progressSnapshot(for: day).totalProgress
+                            }
                         )
 
-                        FoodRecommendationsCard(
-                            sections: recommendationSections,
-                            remainingCalories: nutritionGoal.remainingCalories,
-                            remainingProteinGrams: nutritionGoal.remainingProteinGrams
+                        if !enabledRoutineSlots.isEmpty {
+                            FoodRoutineScheduleCard(
+                                dayStart: routineDayStart,
+                                slots: enabledRoutineSlots,
+                                doneBySlotId: routineDoneBySlotId,
+                                onToggle: { slot, isDone in
+                                    setRoutineMark(slot: slot, isDone: isDone)
+                                }
+                            )
+                        }
+
+                        FoodSelectedDayOverviewCard(
+                            selectedDate: selectedDate,
+                            foodCount: dayEntries.count,
+                            doneMeals: selectedDayProgress.doneMeals,
+                            totalMeals: selectedDayProgress.totalMeals,
+                            doneWater: selectedDayProgress.doneWater,
+                            totalWater: selectedDayProgress.totalWater
                         )
 
-                        FeatureSectionHeader(title: "Alimentos") {
+                        FeatureSectionHeader(title: "Alimentos del dia") {
                             Button {
                                 showingAddSheet = true
                             } label: {
@@ -214,13 +148,11 @@ struct FoodLogView: View {
             .navigationTitle("Comidas")
             .navigationBarTitleDisplayMode(.inline)
             .sheet(isPresented: $showingAddSheet) {
-                AddFoodEntryView(initialDate: selectedDate) { name, mealType, quantity, calories, proteinGrams, note, date in
+                AddFoodEntryView(initialDate: selectedDate) { name, mealType, quality, note, date in
                     createEntry(
                         name: name,
                         mealType: mealType,
-                        quantity: quantity,
-                        calories: calories,
-                        proteinGrams: proteinGrams,
+                        quality: quality,
                         note: note,
                         date: date
                     )
@@ -231,14 +163,12 @@ struct FoodLogView: View {
                     AddFoodEntryView(
                         initialDate: selectedDate,
                         initialEntry: selectedEntryForEditing
-                    ) { name, mealType, quantity, calories, proteinGrams, note, date in
+                    ) { name, mealType, quality, note, date in
                         updateEntry(
                             selectedEntryForEditing,
                             name: name,
                             mealType: mealType,
-                            quantity: quantity,
-                            calories: calories,
-                            proteinGrams: proteinGrams,
+                            quality: quality,
                             note: note,
                             date: date
                         )
@@ -257,332 +187,63 @@ struct FoodLogView: View {
             }
             .animation(.snappy(duration: 0.3), value: dayEntries.count)
             .onAppear {
-                scheduleRecommendationRecompute(immediate: true)
-            }
-            .onChange(of: recommendationsRefreshSignature) { _, _ in
-                scheduleRecommendationRecompute()
-            }
-            .onDisappear {
-                recommendationsRefreshTask?.cancel()
-                recommendationsRefreshTask = nil
+                RoutineSlotSeeder.ensureDefaultRoutineSlotsIfNeeded(in: modelContext)
+                displayedMonth = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: selectedDate)) ?? selectedDate
             }
         }
     }
 
-    private func scheduleRecommendationRecompute(immediate: Bool = false) {
-        recommendationsRefreshTask?.cancel()
-        recommendationsRefreshTask = Task {
-            if !immediate {
-                try? await Task.sleep(for: .milliseconds(120))
-            }
-            guard !Task.isCancelled else { return }
-            recomputeRecommendationSections()
-        }
-    }
+    private func progressSnapshot(for day: Date) -> DayRoutineProgress {
+        let cal = Calendar.current
+        let dayStart = cal.startOfDay(for: day)
+        let doneSlotIds = Set(
+            routineMarks
+                .filter { $0.isDone && cal.isDate($0.dayStart, inSameDayAs: dayStart) }
+                .map(\.slotId)
+        )
 
-    private func recomputeRecommendationSections() {
-        let interval = Observability.foodSignposter.beginInterval("food.recommendations.recompute")
-        defer { Observability.foodSignposter.endInterval("food.recommendations.recompute", interval) }
-        cachedRecommendationSections = FoodMealType.allCases.map { mealType in
-            (mealType, recommendations(for: mealType))
+        let mealSlots = enabledRoutineSlots.filter { !$0.isWater }
+        let waterSlots = enabledRoutineSlots.filter(\.isWater)
+
+        let doneMeals = mealSlots.reduce(into: 0) { partialResult, slot in
+            if doneSlotIds.contains(slot.id) { partialResult += 1 }
         }
-        Observability.debug(
-            Observability.foodLogger,
-            "Recommendations recomputed. sections: \(cachedRecommendationSections.count), entries: \(entries.count)"
+        let doneWater = waterSlots.reduce(into: 0) { partialResult, slot in
+            if doneSlotIds.contains(slot.id) { partialResult += 1 }
+        }
+
+        let totalMeals = mealSlots.count
+        let totalWater = waterSlots.count
+        let totalDone = doneMeals + doneWater
+        let totalTracked = max(1, totalMeals + totalWater)
+
+        return DayRoutineProgress(
+            doneMeals: doneMeals,
+            totalMeals: totalMeals,
+            doneWater: doneWater,
+            totalWater: totalWater,
+            totalProgress: Double(totalDone) / Double(totalTracked)
         )
     }
 
-    private func updateTargetWeight(by delta: Double) {
-        let base = targetWeightStorage > 0 ? targetWeightStorage : currentTargetWeightKg
-        targetWeightStorage = min(max(base + delta, 35), 220)
-    }
-
-    private func averageDailyCaloriesLast30Days(referenceDate: Date) -> Double {
-        let calendar = Calendar.current
-        let dayStart = calendar.startOfDay(for: referenceDate)
-        guard let startDate = calendar.date(byAdding: .day, value: -30, to: dayStart) else { return 0 }
-
-        let recentEntries = entries.filter { $0.date >= startDate && $0.date < dayStart }
-        guard !recentEntries.isEmpty else { return 0 }
-
-        let groupedByDay = Dictionary(grouping: recentEntries) { calendar.startOfDay(for: $0.date) }
-        let dailyCalories = groupedByDay.values.map { dayEntries in
-            dayEntries.map(\.calories).reduce(0, +)
+    private func setRoutineMark(slot: MealWaterRoutineSlot, isDone: Bool) {
+        let cal = Calendar.current
+        let dayStart = routineDayStart
+        if let existing = routineMarks.first(where: {
+            $0.slotId == slot.id && cal.isDate($0.dayStart, inSameDayAs: dayStart)
+        }) {
+            existing.isDone = isDone
+            existing.updatedAt = .now
+        } else {
+            modelContext.insert(MealWaterRoutineDayMark(slotId: slot.id, dayStart: dayStart, isDone: isDone))
         }
-        guard !dailyCalories.isEmpty else { return 0 }
-
-        return Double(dailyCalories.reduce(0, +)) / Double(dailyCalories.count)
-    }
-
-    private func recommendations(for mealType: FoodMealType) -> [FoodRecommendation] {
-        let aggregates = historyAggregates(for: mealType)
-        var result: [FoodRecommendation] = aggregates.prefix(2).map { aggregate in
-            FoodRecommendation(
-                mealType: mealType,
-                title: aggregate.name,
-                calories: aggregate.avgCalories,
-                proteinGrams: aggregate.avgProteinGrams,
-                reason: historyReason(for: aggregate)
-            )
-        }
-
-        let templates = fallbackTemplates(for: mealType)
-        guard !templates.isEmpty else { return Array(result.prefix(3)) }
-
-        let focusedTemplate = macroFocusedTemplate(
-            for: mealType,
-            remainingCalories: nutritionGoal.remainingCalories,
-            remainingProtein: nutritionGoal.remainingProteinGrams
-        )
-
-        var orderedTemplates = templates
-        if let focusedTemplate {
-            orderedTemplates.removeAll { normalizedFoodName($0.name) == normalizedFoodName(focusedTemplate.name) }
-            orderedTemplates.insert(focusedTemplate, at: 0)
-        }
-
-        var usedNames = Set(result.map { normalizedFoodName($0.title) })
-        for template in orderedTemplates {
-            guard result.count < 3 else { break }
-            let normalized = normalizedFoodName(template.name)
-            guard !usedNames.contains(normalized) else { continue }
-
-            result.append(
-                FoodRecommendation(
-                    mealType: template.mealType,
-                    title: template.name,
-                    calories: template.calories,
-                    proteinGrams: template.proteinGrams,
-                    reason: fallbackReason(
-                        for: template,
-                        remainingCalories: nutritionGoal.remainingCalories,
-                        remainingProtein: nutritionGoal.remainingProteinGrams
-                    )
-                )
-            )
-            usedNames.insert(normalized)
-        }
-
-        return Array(result.prefix(3))
-    }
-
-    private func historyAggregates(for mealType: FoodMealType) -> [FoodHistoryAggregate] {
-        let calendar = Calendar.current
-        let referenceDay = calendar.startOfDay(for: selectedDate)
-        guard
-            let startDate = calendar.date(byAdding: .day, value: -45, to: referenceDay),
-            let yesterday = calendar.date(byAdding: .day, value: -1, to: referenceDay)
-        else {
-            return []
-        }
-
-        let recentEntries = entries.filter {
-            $0.mealType == mealType &&
-            $0.date >= startDate &&
-            $0.date < referenceDay
-        }
-
-        let grouped = Dictionary(grouping: recentEntries) { entry in
-            normalizedFoodName(entry.name)
-        }.filter { !$0.key.isEmpty }
-
-        let aggregates = grouped.compactMap { _, groupedEntries -> FoodHistoryAggregate? in
-            let sortedByDate = groupedEntries.sorted { $0.date > $1.date }
-            guard let latest = sortedByDate.first else { return nil }
-
-            let displayName = latest.name.trimmingCharacters(in: .whitespacesAndNewlines)
-            let caloriesValues = groupedEntries.map(\.calories).filter { $0 > 0 }
-            let avgCalories: Int
-            if caloriesValues.isEmpty {
-                avgCalories = defaultCalories(for: mealType)
-            } else {
-                let sum = caloriesValues.reduce(0, +)
-                avgCalories = Int((Double(sum) / Double(caloriesValues.count)).rounded())
-            }
-
-            let proteinValues = groupedEntries.compactMap(\.proteinGrams).filter { $0 > 0 }
-            let avgProtein: Int
-            if proteinValues.isEmpty {
-                avgProtein = estimatedProtein(for: displayName, calories: avgCalories) ?? defaultProtein(for: mealType)
-            } else {
-                avgProtein = Int((proteinValues.reduce(0, +) / Double(proteinValues.count)).rounded())
-            }
-
-            let monthCount = groupedEntries.filter {
-                calendar.isDate($0.date, equalTo: selectedDate, toGranularity: .month)
-            }.count
-
-            return FoodHistoryAggregate(
-                name: displayName,
-                usesCount: groupedEntries.count,
-                monthCount: monthCount,
-                usedYesterday: groupedEntries.contains { calendar.isDate($0.date, inSameDayAs: yesterday) },
-                lastDate: latest.date,
-                avgCalories: max(avgCalories, 0),
-                avgProteinGrams: max(avgProtein, 0)
-            )
-        }
-
-        return aggregates.sorted { lhs, rhs in
-            if lhs.usedYesterday != rhs.usedYesterday {
-                return lhs.usedYesterday && !rhs.usedYesterday
-            }
-            if lhs.monthCount != rhs.monthCount {
-                return lhs.monthCount > rhs.monthCount
-            }
-            if lhs.usesCount != rhs.usesCount {
-                return lhs.usesCount > rhs.usesCount
-            }
-            return lhs.lastDate > rhs.lastDate
-        }
-    }
-
-    private func historyReason(for aggregate: FoodHistoryAggregate) -> String {
-        if aggregate.usedYesterday {
-            return "La comiste ayer y te ha funcionado en tu dia."
-        }
-        if aggregate.monthCount >= 3 {
-            return "La repetiste \(aggregate.monthCount)x este mes."
-        }
-        if aggregate.usesCount >= 2 {
-            return "Sale seguido en tu historial reciente."
-        }
-        return "Aparece en tu historial del ultimo mes."
-    }
-
-    private func fallbackReason(
-        for template: FoodFallbackTemplate,
-        remainingCalories: Int,
-        remainingProtein: Int
-    ) -> String {
-        if remainingProtein > 25 && template.proteinGrams >= 25 {
-            return "Prioriza proteina para ganar musculo."
-        }
-        if remainingCalories < 320 && template.calories <= 320 {
-            return "Opcion ligera para cerrar el dia."
-        }
-        if remainingCalories > 650 && template.calories >= 420 {
-            return "Te ayuda a completar energia del dia."
-        }
-        return "Opcion balanceada para tus metas."
-    }
-
-    private func macroFocusedTemplate(
-        for mealType: FoodMealType,
-        remainingCalories: Int,
-        remainingProtein: Int
-    ) -> FoodFallbackTemplate? {
-        let templates = fallbackTemplates(for: mealType)
-        guard !templates.isEmpty else { return nil }
-
-        if remainingProtein > 30 {
-            return templates.max { lhs, rhs in
-                lhs.proteinGrams < rhs.proteinGrams
-            }
-        }
-
-        if remainingCalories < 350 {
-            return templates.min { lhs, rhs in
-                lhs.calories < rhs.calories
-            }
-        }
-
-        let targetCalories = max(min(remainingCalories, 700), 320)
-        return templates.min { lhs, rhs in
-            abs(lhs.calories - targetCalories) < abs(rhs.calories - targetCalories)
-        }
-    }
-
-    private func fallbackTemplates(for mealType: FoodMealType) -> [FoodFallbackTemplate] {
-        switch mealType {
-        case .breakfast:
-            return [
-                FoodFallbackTemplate(mealType: .breakfast, name: "Huevos con claras", calories: 340, proteinGrams: 32),
-                FoodFallbackTemplate(mealType: .breakfast, name: "Avena con proteina", calories: 410, proteinGrams: 34),
-                FoodFallbackTemplate(mealType: .breakfast, name: "Yogurt griego con fruta", calories: 280, proteinGrams: 24)
-            ]
-        case .lunch:
-            return [
-                FoodFallbackTemplate(mealType: .lunch, name: "Pollo con arroz y verduras", calories: 620, proteinGrams: 45),
-                FoodFallbackTemplate(mealType: .lunch, name: "Atun con papa cocida", calories: 500, proteinGrams: 40),
-                FoodFallbackTemplate(mealType: .lunch, name: "Carne magra con ensalada", calories: 540, proteinGrams: 42)
-            ]
-        case .dinner:
-            return [
-                FoodFallbackTemplate(mealType: .dinner, name: "Pescado con verduras", calories: 430, proteinGrams: 38),
-                FoodFallbackTemplate(mealType: .dinner, name: "Tortilla de claras con queso", calories: 360, proteinGrams: 34),
-                FoodFallbackTemplate(mealType: .dinner, name: "Wrap integral de pollo", calories: 470, proteinGrams: 36)
-            ]
-        case .snack:
-            return [
-                FoodFallbackTemplate(mealType: .snack, name: "Batido de proteina", calories: 210, proteinGrams: 28),
-                FoodFallbackTemplate(mealType: .snack, name: "Yogurt griego natural", calories: 170, proteinGrams: 19),
-                FoodFallbackTemplate(mealType: .snack, name: "Queso cottage con fruta", calories: 220, proteinGrams: 21)
-            ]
-        }
-    }
-
-    private func defaultCalories(for mealType: FoodMealType) -> Int {
-        switch mealType {
-        case .breakfast:
-            return 380
-        case .lunch:
-            return 560
-        case .dinner:
-            return 500
-        case .snack:
-            return 220
-        }
-    }
-
-    private func defaultProtein(for mealType: FoodMealType) -> Int {
-        switch mealType {
-        case .breakfast:
-            return 26
-        case .lunch:
-            return 36
-        case .dinner:
-            return 32
-        case .snack:
-            return 18
-        }
-    }
-
-    private func estimatedProtein(for foodName: String, calories: Int) -> Int? {
-        let normalized = foodName.lowercased()
-        let hints: [(String, Int)] = [
-            ("pollo", 40),
-            ("atun", 36),
-            ("huevo", 28),
-            ("claras", 30),
-            ("carne", 38),
-            ("res", 36),
-            ("pescado", 34),
-            ("salmon", 34),
-            ("yogurt", 20),
-            ("proteina", 28),
-            ("queso", 22),
-            ("cottage", 24)
-        ]
-
-        if let exact = hints.first(where: { normalized.contains($0.0) }) {
-            return exact.1
-        }
-
-        guard calories > 0 else { return nil }
-        return max(Int((Double(calories) * 0.08).rounded()), 10)
-    }
-
-    private func normalizedFoodName(_ name: String) -> String {
-        name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        NotificationCenter.default.post(name: .leerraumRefreshWidgetSnapshot, object: nil)
     }
 
     private func createEntry(
         name: String,
         mealType: FoodMealType,
-        quantity: String,
-        calories: Int,
-        proteinGrams: Int,
+        quality: FoodQualityType,
         note: String,
         date: Date
     ) {
@@ -592,9 +253,7 @@ struct FoodLogView: View {
         let entry = FoodEntry(
             name: trimmedName,
             mealType: mealType,
-            quantity: quantity.trimmingCharacters(in: .whitespacesAndNewlines),
-            calories: max(calories, 0),
-            proteinGrams: proteinGrams > 0 ? Double(proteinGrams) : nil,
+            quality: quality,
             note: note.trimmingCharacters(in: .whitespacesAndNewlines),
             date: date
         )
@@ -608,9 +267,7 @@ struct FoodLogView: View {
         _ entry: FoodEntry,
         name: String,
         mealType: FoodMealType,
-        quantity: String,
-        calories: Int,
-        proteinGrams: Int,
+        quality: FoodQualityType,
         note: String,
         date: Date
     ) {
@@ -620,9 +277,8 @@ struct FoodLogView: View {
         withAnimation(.easeInOut(duration: 0.2)) {
             entry.name = trimmedName
             entry.mealType = mealType
-            entry.quantity = quantity.trimmingCharacters(in: .whitespacesAndNewlines)
-            entry.calories = max(calories, 0)
-            entry.proteinGrams = proteinGrams > 0 ? Double(proteinGrams) : nil
+            entry.quantity = ""
+            entry.quality = quality
             entry.note = note.trimmingCharacters(in: .whitespacesAndNewlines)
             entry.date = date
         }
@@ -638,6 +294,67 @@ struct FoodLogView: View {
     }
 }
 
+private struct DayRoutineProgress {
+    let doneMeals: Int
+    let totalMeals: Int
+    let doneWater: Int
+    let totalWater: Int
+    let totalProgress: Double
+}
+
+private struct FoodSelectedDayOverviewCard: View {
+    let selectedDate: Date
+    let foodCount: Int
+    let doneMeals: Int
+    let totalMeals: Int
+    let doneWater: Int
+    let totalWater: Int
+
+    private var dateText: String {
+        AppDateFormatters.esMXLongWeekdayDayMonth.string(from: selectedDate).capitalized
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Dia seleccionado")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.appTextSecondary)
+
+            Text(dateText)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.appTextPrimary)
+
+            HStack(spacing: 8) {
+                dayPill("Comi", "\(foodCount)")
+                dayPill("Rutina comida", "\(doneMeals)/\(totalMeals)")
+                dayPill("Agua", "\(doneWater)/\(totalWater)")
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.appSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.appStrokeSoft, lineWidth: 1)
+        )
+    }
+
+    private func dayPill(_ title: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(Color.appTextSecondary)
+            Text(value)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(Color.appTextPrimary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 7)
+        .background(Color.appField, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+}
+
 private struct FoodBackgroundView: View {
     var body: some View {
         FeatureGradientBackground(palette: .food)
@@ -648,8 +365,9 @@ private struct FoodSummaryCard: View {
     @Environment(\.colorScheme) private var colorScheme
     let selectedDate: Date
     let totalEntries: Int
-    let totalCalories: Int
-    let totalProteinGrams: Int
+    let healthyCount: Int
+    let mediumCount: Int
+    let junkCount: Int
 
     private var dateText: String {
         AppDateFormatters.esMXLongWeekdayDayMonth.string(from: selectedDate).capitalized
@@ -680,8 +398,9 @@ private struct FoodSummaryCard: View {
 
             HStack(spacing: 10) {
                 FoodMetricPill(title: "Alimentos", value: "\(totalEntries)")
-                FoodMetricPill(title: "Calorias", value: "\(totalCalories) kcal")
-                FoodMetricPill(title: "Proteina", value: "\(totalProteinGrams) g")
+                FoodMetricPill(title: "Saludable", value: "\(healthyCount)")
+                FoodMetricPill(title: "Medio", value: "\(mediumCount)")
+                FoodMetricPill(title: "Chatarra", value: "\(junkCount)")
             }
         }
         .padding(16)
@@ -698,6 +417,255 @@ private struct FoodSummaryCard: View {
             RoundedRectangle(cornerRadius: 22, style: .continuous)
                 .stroke(strokeColor, lineWidth: 1)
         )
+    }
+}
+
+private struct FoodProgressCalendarCard: View {
+    @Binding var displayedMonth: Date
+    @Binding var selectedDate: Date
+    let subtitle: String
+    let progressForDay: (Date) -> Double
+
+    private let calendar = Calendar.current
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 7)
+    private let weekdays = ["L", "M", "M", "J", "V", "S", "D"]
+
+    private var monthTitle: String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "es_MX")
+        formatter.dateFormat = "LLLL yyyy"
+        return formatter.string(from: displayedMonth).capitalized
+    }
+
+    private var monthStart: Date {
+        calendar.date(from: calendar.dateComponents([.year, .month], from: displayedMonth)) ?? displayedMonth
+    }
+
+    private var dayCells: [Date?] {
+        guard let range = calendar.range(of: .day, in: .month, for: monthStart) else { return [] }
+        let firstWeekday = calendar.component(.weekday, from: monthStart)
+        let leading = (firstWeekday - calendar.firstWeekday + 7) % 7
+        var cells = Array<Date?>(repeating: nil, count: leading)
+        for day in range {
+            if let date = calendar.date(byAdding: .day, value: day - 1, to: monthStart) {
+                cells.append(date)
+            }
+        }
+        return cells
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("Calendario de progreso", systemImage: "calendar")
+                    .font(.headline.weight(.semibold))
+                    .fontDesign(.rounded)
+                    .foregroundStyle(Color.appTextPrimary)
+                Spacer()
+                monthSwitchButton(systemImage: "chevron.left", delta: -1)
+                Text(monthTitle)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.appTextSecondary)
+                    .frame(minWidth: 120)
+                monthSwitchButton(systemImage: "chevron.right", delta: 1)
+            }
+
+            Text(subtitle)
+                .font(.caption)
+                .foregroundStyle(Color.appTextSecondary)
+
+            LazyVGrid(columns: columns, spacing: 7) {
+                ForEach(Array(weekdays.enumerated()), id: \.offset) { _, dayLabel in
+                    Text(dayLabel)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(Color.appTextSecondary)
+                        .frame(maxWidth: .infinity)
+                }
+
+                ForEach(Array(dayCells.enumerated()), id: \.offset) { _, day in
+                    if let day {
+                        dayCell(day)
+                    } else {
+                        Color.clear
+                            .frame(height: 28)
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.appSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.appStrokeSoft, lineWidth: 1)
+        )
+    }
+
+    private func monthSwitchButton(systemImage: String, delta: Int) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                displayedMonth = calendar.date(byAdding: .month, value: delta, to: displayedMonth) ?? displayedMonth
+            }
+        } label: {
+            Image(systemName: systemImage)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(Color.appTextPrimary)
+                .frame(width: 22, height: 22)
+                .background(Color.appField, in: Circle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func dayCell(_ day: Date) -> some View {
+        let progress = progressForDay(day)
+        let isSelected = calendar.isDate(day, inSameDayAs: selectedDate)
+        let isToday = calendar.isDateInToday(day)
+
+        return Button {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                selectedDate = day
+            }
+        } label: {
+            Text("\(calendar.component(.day, from: day))")
+                .font(.caption.weight(isSelected ? .bold : .semibold))
+                .foregroundStyle(Color.appTextPrimary)
+                .frame(maxWidth: .infinity, minHeight: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(progressTint(for: progress).opacity(isSelected ? 0.34 : 0.20))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(isSelected ? AppPalette.Food.c600 : (isToday ? AppPalette.Food.c600.opacity(0.45) : .clear), lineWidth: isSelected ? 1.5 : 1)
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func progressTint(for progress: Double) -> Color {
+        switch progress {
+        case 0.80...:
+            return Color(red: 0.20, green: 0.72, blue: 0.45)
+        case 0.40...:
+            return Color(red: 0.95, green: 0.62, blue: 0.22)
+        case 0.01...:
+            return Color(red: 0.91, green: 0.39, blue: 0.35)
+        default:
+            return Color.appField
+        }
+    }
+}
+
+private struct FoodRoutineScheduleCard: View {
+    let dayStart: Date
+    let slots: [MealWaterRoutineSlot]
+    let doneBySlotId: [UUID: Bool]
+    let onToggle: (MealWaterRoutineSlot, Bool) -> Void
+
+    private var mealSlots: [MealWaterRoutineSlot] {
+        slots.filter { !$0.isWater }
+    }
+
+    private var waterSlots: [MealWaterRoutineSlot] {
+        slots.filter(\.isWater)
+    }
+
+    private var dayTitle: String {
+        let cal = Calendar.current
+        if cal.isDateInToday(dayStart) {
+            return "Horarios de hoy"
+        }
+        return "Horarios del " + AppDateFormatters.esMXShortDate.string(from: dayStart).capitalized
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label(dayTitle, systemImage: "clock.fill")
+                .font(.headline.weight(.semibold))
+                .fontDesign(.rounded)
+                .foregroundStyle(Color.appTextPrimary)
+
+            Text("Toca una tarjeta para marcarla como cumplida.")
+                .font(.caption)
+                .foregroundStyle(Color.appTextSecondary)
+
+            if !mealSlots.isEmpty {
+                routineSection(title: "Comidas", icon: "fork.knife", sectionSlots: mealSlots)
+            }
+
+            if !waterSlots.isEmpty {
+                routineSection(title: "Agua", icon: "drop.fill", sectionSlots: waterSlots)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.appSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.appStrokeSoft, lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
+    private func routineSection(title: String, icon: String, sectionSlots: [MealWaterRoutineSlot]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(title, systemImage: icon)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.appTextPrimary)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(sectionSlots, id: \.id) { slot in
+                        routineCard(slot)
+                    }
+                }
+                .padding(.horizontal, 1)
+                .padding(.vertical, 1)
+            }
+        }
+    }
+
+    private func routineCard(_ slot: MealWaterRoutineSlot) -> some View {
+        let done = doneBySlotId[slot.id] ?? false
+        return Button {
+            onToggle(slot, !done)
+        } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: slot.isWater ? "drop.fill" : "fork.knife")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(slot.isWater ? Color(red: 0.20, green: 0.55, blue: 0.85) : AppPalette.Food.c600)
+                    Text(slot.timeString)
+                        .font(.caption.weight(.bold).monospacedDigit())
+                        .foregroundStyle(Color.appTextSecondary)
+                }
+
+                Text(slot.title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.appTextPrimary)
+                    .lineLimit(1)
+
+                HStack(spacing: 6) {
+                    Image(systemName: done ? "checkmark.circle.fill" : "circle")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(done ? Color(red: 0.20, green: 0.72, blue: 0.45) : Color.appTextSecondary)
+                    Text(done ? "Cumplido" : "Pendiente")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(done ? Color(red: 0.20, green: 0.62, blue: 0.40) : Color.appTextSecondary)
+                }
+            }
+            .padding(12)
+            .frame(width: 132, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(done ? Color(red: 0.89, green: 0.97, blue: 0.92) : Color.appField)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(done ? Color(red: 0.20, green: 0.72, blue: 0.45).opacity(0.35) : Color.appStrokeSoft, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -721,238 +689,6 @@ private struct FoodMetricPill: View {
         .padding(.vertical, 8)
         .background(
             .white.opacity(colorScheme == .dark ? 0.17 : 0.24),
-            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-        )
-    }
-}
-
-private struct FoodGoalCard: View {
-    let latestWeightKg: Double?
-    let targetWeightKg: Double
-    let summary: FoodGoalSummary
-    let onDecreaseTarget: () -> Void
-    let onIncreaseTarget: () -> Void
-
-    private var statusTitle: String {
-        summary.isTrainingDay ? "Dia de entrenamiento" : "Dia de descanso"
-    }
-
-    private var statusTint: Color {
-        summary.isTrainingDay ? AppPalette.Gym.c600 : AppPalette.Food.c700
-    }
-
-    private func formatWeight(_ value: Double) -> String {
-        value.formatted(.number.precision(.fractionLength(1)))
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Text("Objetivo diario")
-                    .font(.headline.weight(.semibold))
-                    .fontDesign(.rounded)
-                    .foregroundStyle(Color.appTextPrimary)
-
-                Spacer()
-
-                Text(statusTitle)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(statusTint)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(statusTint.opacity(0.14), in: Capsule())
-            }
-
-            HStack(spacing: 10) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Peso objetivo")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.appTextSecondary)
-
-                    HStack(spacing: 10) {
-                        Button(action: onDecreaseTarget) {
-                            Image(systemName: "minus")
-                                .font(.caption.weight(.bold))
-                                .foregroundStyle(AppPalette.Food.c700)
-                                .frame(width: 26, height: 26)
-                                .background(AppPalette.Food.c700.opacity(0.14), in: Circle())
-                        }
-                        .buttonStyle(.plain)
-
-                        Text("\(formatWeight(targetWeightKg)) kg")
-                            .font(.subheadline.weight(.bold))
-                            .foregroundStyle(Color.appTextPrimary)
-                            .monospacedDigit()
-
-                        Button(action: onIncreaseTarget) {
-                            Image(systemName: "plus")
-                                .font(.caption.weight(.bold))
-                                .foregroundStyle(AppPalette.Food.c700)
-                                .frame(width: 26, height: 26)
-                                .background(AppPalette.Food.c700.opacity(0.14), in: Circle())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-
-                Spacer(minLength: 8)
-
-                VStack(alignment: .trailing, spacing: 4) {
-                    if let latestWeightKg {
-                        Text("Actual: \(formatWeight(latestWeightKg)) kg")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(Color.appTextPrimary)
-                    } else {
-                        Text("Sin peso corporal guardado")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(Color.appTextSecondary)
-                    }
-
-                    Text(summary.sourceDescription)
-                        .font(.caption2)
-                        .foregroundStyle(Color.appTextSecondary)
-                        .multilineTextAlignment(.trailing)
-                }
-            }
-
-            HStack(spacing: 8) {
-                FoodGoalPill(title: "Meta kcal", value: "\(summary.targetCalories)")
-                FoodGoalPill(title: "Meta prot", value: "\(summary.targetProteinGrams) g")
-                FoodGoalPill(
-                    title: "Restante",
-                    value: "\(max(summary.remainingProteinGrams, 0)) g"
-                )
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.appSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.appStrokeSoft, lineWidth: 1)
-        )
-    }
-}
-
-private struct FoodGoalPill: View {
-    let title: String
-    let value: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(Color.appTextSecondary)
-
-            Text(value)
-                .font(.caption.weight(.bold))
-                .foregroundStyle(Color.appTextPrimary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(
-            Color.appField,
-            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-        )
-    }
-}
-
-private struct FoodRecommendationsCard: View {
-    let sections: [(FoodMealType, [FoodRecommendation])]
-    let remainingCalories: Int
-    let remainingProteinGrams: Int
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Recomendaciones del dia")
-                .font(.headline.weight(.semibold))
-                .fontDesign(.rounded)
-                .foregroundStyle(Color.appTextPrimary)
-
-            Text("Basado en hoy, ayer y tu historial del mes.")
-                .font(.caption)
-                .foregroundStyle(Color.appTextSecondary)
-
-            if sections.allSatisfy({ $0.1.isEmpty }) {
-                Text("Agrega alimentos para generar sugerencias personalizadas.")
-                    .font(.subheadline)
-                    .foregroundStyle(Color.appTextSecondary)
-            } else {
-                VStack(spacing: 8) {
-                    ForEach(sections, id: \.0.id) { mealType, items in
-                        if !items.isEmpty {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Label(mealType.displayName, systemImage: mealType.icon)
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundStyle(mealType.tint)
-
-                                ForEach(items) { recommendation in
-                                    FoodRecommendationRow(recommendation: recommendation)
-                                }
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 10)
-                            .background(
-                                Color.appField,
-                                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            )
-                        }
-                    }
-                }
-            }
-
-            if remainingCalories < 0 || remainingProteinGrams < 0 {
-                Text("Hoy ya superaste una de tus metas. Ajusta porciones o sube tu meta si es necesario.")
-                    .font(.caption2)
-                    .foregroundStyle(Color.appTextSecondary)
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.appSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.appStrokeSoft, lineWidth: 1)
-        )
-    }
-}
-
-private struct FoodRecommendationRow: View {
-    let recommendation: FoodRecommendation
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(recommendation.title)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Color.appTextPrimary)
-
-                Text(recommendation.reason)
-                    .font(.caption)
-                    .foregroundStyle(Color.appTextSecondary)
-                    .lineLimit(2)
-            }
-
-            Spacer(minLength: 8)
-
-            VStack(alignment: .trailing, spacing: 1) {
-                Text("\(recommendation.calories) kcal")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(Color.appTextPrimary)
-                    .monospacedDigit()
-
-                Text("\(recommendation.proteinGrams) g prot")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(AppPalette.Gym.c600)
-                    .monospacedDigit()
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(
-            Color.appSurface,
             in: RoundedRectangle(cornerRadius: 10, style: .continuous)
         )
     }
@@ -994,16 +730,6 @@ private struct FoodMealSectionCard: View {
     let entries: [FoodEntry]
     let onSelectEntry: (FoodEntry) -> Void
 
-    private var calories: Int {
-        entries.map(\.calories).reduce(0, +)
-    }
-
-    private var proteinGrams: Int {
-        entries.reduce(0) { partial, entry in
-            partial + Int((entry.proteinGrams ?? 0).rounded())
-        }
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
@@ -1012,16 +738,9 @@ private struct FoodMealSectionCard: View {
                     .foregroundStyle(mealType.tint)
 
                 Spacer()
-
-                HStack(spacing: 6) {
-                    Text("\(calories) kcal")
-                    if proteinGrams > 0 {
-                        Text("· \(proteinGrams) g")
-                    }
-                }
-                .font(.subheadline.weight(.bold))
-                .foregroundStyle(Color.appTextPrimary)
-                .monospacedDigit()
+                Text("\(entries.count) alimento(s)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.appTextSecondary)
             }
 
             VStack(spacing: 8) {
@@ -1060,18 +779,7 @@ private struct FoodEntryRow: View {
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Color.appTextPrimary)
 
-                    HStack(spacing: 6) {
-                        Text(timeText)
-                        if !entry.quantity.isEmpty {
-                            Text("· \(entry.quantity)")
-                        }
-                        if entry.calories > 0 {
-                            Text("· \(entry.calories) kcal")
-                        }
-                        if let proteinGrams = entry.proteinGrams, proteinGrams > 0 {
-                            Text("· \(Int(proteinGrams.rounded())) g prot")
-                        }
-                    }
+                    Text(timeText)
                     .font(.caption)
                     .foregroundStyle(Color.appTextSecondary)
 
@@ -1085,9 +793,12 @@ private struct FoodEntryRow: View {
 
                 Spacer(minLength: 6)
 
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color.appTextSecondary)
+                HStack(spacing: 8) {
+                    FoodQualityBadge(quality: entry.quality)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.appTextSecondary)
+                }
             }
             .contentShape(Rectangle())
             .padding(.horizontal, 10)
@@ -1101,176 +812,16 @@ private struct FoodEntryRow: View {
     }
 }
 
-private enum FoodQuantityUnit: String, CaseIterable, Identifiable {
-    case grams = "g"
-    case kilograms = "kg"
-    case milliliters = "ml"
-    case liters = "l"
-    case ounces = "oz"
-    case pounds = "lb"
-    case cups = "taza"
-    case tablespoons = "cda"
-    case teaspoons = "cdta"
-    case pieces = "pieza"
-    case portions = "porcion"
-    case slices = "rebanada"
-    case none = "none"
+private struct FoodQualityBadge: View {
+    let quality: FoodQualityType
 
-    var id: String { rawValue }
-
-    var displayName: String {
-        singularDisplayName
-    }
-
-    func displayName(for quantityText: String) -> String {
-        usesPlural(for: quantityText) ? pluralDisplayName : singularDisplayName
-    }
-
-    private var singularDisplayName: String {
-        switch self {
-        case .grams:
-            return "g"
-        case .kilograms:
-            return "kg"
-        case .milliliters:
-            return "ml"
-        case .liters:
-            return "L"
-        case .ounces:
-            return "oz"
-        case .pounds:
-            return "lb"
-        case .cups:
-            return "taza"
-        case .tablespoons:
-            return "cda"
-        case .teaspoons:
-            return "cdta"
-        case .pieces:
-            return "pieza"
-        case .portions:
-            return "porcion"
-        case .slices:
-            return "rebanada"
-        case .none:
-            return "sin ud."
-        }
-    }
-
-    private var pluralDisplayName: String {
-        switch self {
-        case .cups:
-            return "tazas"
-        case .tablespoons:
-            return "cdas"
-        case .teaspoons:
-            return "cdtas"
-        case .pieces:
-            return "piezas"
-        case .portions:
-            return "porciones"
-        case .slices:
-            return "rebanadas"
-        default:
-            return singularDisplayName
-        }
-    }
-
-    var optionTitle: String {
-        switch self {
-        case .grams:
-            return "Gramos (g)"
-        case .kilograms:
-            return "Kilogramos (kg)"
-        case .milliliters:
-            return "Mililitros (ml)"
-        case .liters:
-            return "Litros (L)"
-        case .ounces:
-            return "Onzas (oz)"
-        case .pounds:
-            return "Libras (lb)"
-        case .cups:
-            return "Tazas"
-        case .tablespoons:
-            return "Cucharadas (cda)"
-        case .teaspoons:
-            return "Cucharaditas (cdta)"
-        case .pieces:
-            return "Piezas"
-        case .portions:
-            return "Porciones"
-        case .slices:
-            return "Rebanadas"
-        case .none:
-            return "Sin unidad"
-        }
-    }
-
-    func symbol(for quantityText: String) -> String? {
-        switch self {
-        case .none:
-            return nil
-        case .liters:
-            return "L"
-        case .cups:
-            return usesPlural(for: quantityText) ? "tazas" : "taza"
-        case .tablespoons:
-            return usesPlural(for: quantityText) ? "cdas" : "cda"
-        case .teaspoons:
-            return usesPlural(for: quantityText) ? "cdtas" : "cdta"
-        case .pieces:
-            return usesPlural(for: quantityText) ? "piezas" : "pieza"
-        case .portions:
-            return usesPlural(for: quantityText) ? "porciones" : "porcion"
-        case .slices:
-            return usesPlural(for: quantityText) ? "rebanadas" : "rebanada"
-        default:
-            return rawValue
-        }
-    }
-
-    private func usesPlural(for quantityText: String) -> Bool {
-        guard let value = Self.numericValue(from: quantityText) else { return false }
-        return abs(value - 1) > 0.000_001
-    }
-
-    private static func numericValue(from quantityText: String) -> Double? {
-        let trimmed = quantityText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        let normalized = trimmed.replacingOccurrences(of: ",", with: ".")
-        return Double(normalized)
-    }
-
-    var parseTokens: [String] {
-        switch self {
-        case .grams:
-            return ["g", "gr", "gramo", "gramos"]
-        case .kilograms:
-            return ["kg", "kilo", "kilos", "kilogramo", "kilogramos"]
-        case .milliliters:
-            return ["ml", "mililitro", "mililitros"]
-        case .liters:
-            return ["l", "lt", "litro", "litros"]
-        case .ounces:
-            return ["oz", "onza", "onzas"]
-        case .pounds:
-            return ["lb", "libras", "libra"]
-        case .cups:
-            return ["taza", "tazas"]
-        case .tablespoons:
-            return ["cda", "cdas", "cucharada", "cucharadas"]
-        case .teaspoons:
-            return ["cdta", "cdtas", "cucharadita", "cucharaditas"]
-        case .pieces:
-            return ["pieza", "piezas", "pz"]
-        case .portions:
-            return ["porcion", "porciones"]
-        case .slices:
-            return ["rebanada", "rebanadas", "slice", "slices"]
-        case .none:
-            return []
-        }
+    var body: some View {
+        Label(quality.displayName, systemImage: quality.icon)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(quality.tint)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(quality.tint.opacity(0.15), in: Capsule())
     }
 }
 
@@ -1279,10 +830,7 @@ private struct AddFoodEntryView: View {
 
     @State private var name = ""
     @State private var mealType: FoodMealType = .breakfast
-    @State private var quantityValue = ""
-    @State private var quantityUnit: FoodQuantityUnit = .grams
-    @State private var calories = 0
-    @State private var proteinGrams = 0
+    @State private var quality: FoodQualityType = .medium
     @State private var note = ""
     @State private var date: Date
     @State private var showingDeleteAlert = false
@@ -1290,66 +838,16 @@ private struct AddFoodEntryView: View {
     @FocusState private var focusedField: FoodField?
 
     private let isEditing: Bool
-    let onSave: (_ name: String, _ mealType: FoodMealType, _ quantity: String, _ calories: Int, _ proteinGrams: Int, _ note: String, _ date: Date) -> Void
+    let onSave: (_ name: String, _ mealType: FoodMealType, _ quality: FoodQualityType, _ note: String, _ date: Date) -> Void
     let onDelete: (() -> Void)?
 
     private enum FoodField {
         case name
-        case quantity
         case note
     }
 
     private var canSave: Bool {
         !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private var quantityForSave: String {
-        let trimmedValue = quantityValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedValue.isEmpty else { return "" }
-
-        guard let symbol = quantityUnit.symbol(for: trimmedValue) else {
-            return trimmedValue
-        }
-        return "\(trimmedValue) \(symbol)"
-    }
-
-    private var quantityUnitLabel: String {
-        quantityUnit.displayName(for: quantityValue)
-    }
-
-    private static func parseQuantity(_ rawQuantity: String) -> (value: String, unit: FoodQuantityUnit) {
-        let trimmed = rawQuantity.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return ("", .grams) }
-
-        let lowered = trimmed.lowercased()
-        let units = FoodQuantityUnit.allCases.filter { $0 != .none }
-
-        for unit in units {
-            for token in unit.parseTokens.sorted(by: { $0.count > $1.count }) {
-                if lowered.hasSuffix(" \(token)") {
-                    let value = String(trimmed.dropLast(token.count + 1))
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    return (value, unit)
-                }
-
-                if lowered.hasSuffix(token) {
-                    let value = String(trimmed.dropLast(token.count))
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    if looksNumeric(value) {
-                        return (value, unit)
-                    }
-                }
-            }
-        }
-
-        return (trimmed, .none)
-    }
-
-    private static func looksNumeric(_ text: String) -> Bool {
-        guard !text.isEmpty else { return false }
-        let allowed = CharacterSet(charactersIn: "0123456789.,")
-        let content = CharacterSet(charactersIn: text)
-        return content.isSubset(of: allowed)
     }
 
     private var dateSummaryText: String {
@@ -1419,140 +917,26 @@ private struct AddFoodEntryView: View {
                             .contentShape(Rectangle())
                             .buttonStyle(.plain)
 
-                            FoodInputLabel(title: "Cantidad (opcional)", systemImage: "scalemass")
+                            FoodInputLabel(title: "Calidad de la comida", systemImage: quality.icon)
 
                             HStack(spacing: 8) {
-                                TextField("", text: $quantityValue)
-                                    .textInputAutocapitalization(.never)
-                                    .focused($focusedField, equals: .quantity)
-                                    .foodInputField()
-
-                                Menu {
-                                    ForEach(FoodQuantityUnit.allCases) { unit in
-                                        Button {
-                                            quantityUnit = unit
-                                        } label: {
-                                            HStack {
-                                                Text(unit.optionTitle)
-                                                if unit == quantityUnit {
-                                                    Spacer()
-                                                    Image(systemName: "checkmark")
-                                                }
-                                            }
-                                        }
-                                    }
-                                } label: {
-                                    HStack(spacing: 6) {
-                                        Text(quantityUnitLabel)
-                                            .font(.subheadline.weight(.semibold))
-                                            .foregroundStyle(Color.appTextPrimary)
-                                            .lineLimit(1)
-
-                                        Spacer(minLength: 0)
-
-                                        Image(systemName: "chevron.down")
+                                ForEach(FoodQualityType.allCases) { option in
+                                    Button {
+                                        quality = option
+                                    } label: {
+                                        Text(option.displayName)
                                             .font(.caption.weight(.semibold))
-                                            .foregroundStyle(Color.appTextSecondary)
+                                            .foregroundStyle(quality == option ? .white : option.tint)
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, 8)
+                                            .background(
+                                                (quality == option ? option.tint : option.tint.opacity(0.12)),
+                                                in: Capsule()
+                                            )
                                     }
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 10)
-                                    .background(
-                                        Color.appField,
-                                        in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    )
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                            .stroke(AppPalette.Food.c600.opacity(0.24), lineWidth: 1)
-                                    )
+                                    .buttonStyle(.plain)
                                 }
-                                .frame(width: 132, alignment: .leading)
-                                .buttonStyle(.plain)
                             }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-
-                            FoodInputLabel(title: "Calorias", systemImage: "flame.fill")
-
-                            HStack(spacing: 10) {
-                                Button {
-                                    calories = max(0, calories - 10)
-                                } label: {
-                                    Image(systemName: "minus")
-                                        .font(.caption.weight(.bold))
-                                        .foregroundStyle(AppPalette.Food.c600)
-                                        .frame(width: 28, height: 28)
-                                        .background(AppPalette.Food.c600.opacity(0.14), in: Circle())
-                                }
-                                .buttonStyle(.plain)
-
-                                Text("\(calories) kcal")
-                                    .font(.subheadline.weight(.bold))
-                                    .foregroundStyle(Color.appTextPrimary)
-                                    .frame(maxWidth: .infinity, alignment: .center)
-
-                                Button {
-                                    calories = min(4000, calories + 10)
-                                } label: {
-                                    Image(systemName: "plus")
-                                        .font(.caption.weight(.bold))
-                                        .foregroundStyle(AppPalette.Food.c600)
-                                        .frame(width: 28, height: 28)
-                                        .background(AppPalette.Food.c600.opacity(0.14), in: Circle())
-                                }
-                                .buttonStyle(.plain)
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 10)
-                            .background(
-                                Color.appField,
-                                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .stroke(AppPalette.Food.c600.opacity(0.24), lineWidth: 1)
-                            )
-
-                            FoodInputLabel(title: "Proteina (opcional)", systemImage: "figure.strengthtraining.traditional")
-
-                            HStack(spacing: 10) {
-                                Button {
-                                    proteinGrams = max(0, proteinGrams - 1)
-                                } label: {
-                                    Image(systemName: "minus")
-                                        .font(.caption.weight(.bold))
-                                        .foregroundStyle(AppPalette.Food.c600)
-                                        .frame(width: 28, height: 28)
-                                        .background(AppPalette.Food.c600.opacity(0.14), in: Circle())
-                                }
-                                .buttonStyle(.plain)
-
-                                Text("\(proteinGrams) g")
-                                    .font(.subheadline.weight(.bold))
-                                    .foregroundStyle(Color.appTextPrimary)
-                                    .frame(maxWidth: .infinity, alignment: .center)
-                                    .monospacedDigit()
-
-                                Button {
-                                    proteinGrams = min(300, proteinGrams + 1)
-                                } label: {
-                                    Image(systemName: "plus")
-                                        .font(.caption.weight(.bold))
-                                        .foregroundStyle(AppPalette.Food.c600)
-                                        .frame(width: 28, height: 28)
-                                        .background(AppPalette.Food.c600.opacity(0.14), in: Circle())
-                                }
-                                .buttonStyle(.plain)
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 10)
-                            .background(
-                                Color.appField,
-                                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .stroke(AppPalette.Food.c600.opacity(0.24), lineWidth: 1)
-                            )
 
                             FoodInputLabel(title: "Fecha y hora", systemImage: "calendar")
 
@@ -1652,7 +1036,7 @@ private struct AddFoodEntryView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(isEditing ? "Actualizar" : "Guardar") {
-                        onSave(name, mealType, quantityForSave, calories, proteinGrams, note, date)
+                        onSave(name, mealType, quality, note, date)
                         dismiss()
                     }
                     .disabled(!canSave)
@@ -1676,7 +1060,7 @@ private struct AddFoodEntryView: View {
     init(
         initialDate: Date,
         initialEntry: FoodEntry? = nil,
-        onSave: @escaping (_ name: String, _ mealType: FoodMealType, _ quantity: String, _ calories: Int, _ proteinGrams: Int, _ note: String, _ date: Date) -> Void,
+        onSave: @escaping (_ name: String, _ mealType: FoodMealType, _ quality: FoodQualityType, _ note: String, _ date: Date) -> Void,
         onDelete: (() -> Void)? = nil
     ) {
         self.onSave = onSave
@@ -1684,17 +1068,13 @@ private struct AddFoodEntryView: View {
         self.isEditing = initialEntry != nil
 
         if let initialEntry {
-            let parsedQuantity = Self.parseQuantity(initialEntry.quantity)
             _name = State(initialValue: initialEntry.name)
             _mealType = State(initialValue: initialEntry.mealType)
-            _quantityValue = State(initialValue: parsedQuantity.value)
-            _quantityUnit = State(initialValue: parsedQuantity.unit)
-            _calories = State(initialValue: max(initialEntry.calories, 0))
-            _proteinGrams = State(initialValue: Int((initialEntry.proteinGrams ?? 0).rounded()))
+            _quality = State(initialValue: initialEntry.quality)
             _note = State(initialValue: initialEntry.note)
             _date = State(initialValue: initialEntry.date)
         } else {
-            _quantityUnit = State(initialValue: .grams)
+            _quality = State(initialValue: .medium)
             _date = State(initialValue: initialDate)
         }
     }

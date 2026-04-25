@@ -10,23 +10,15 @@
 		AFF8C70631AD48EC9DAFE6F9 /* LeerraumWidget.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = DCFECA2E0BF24208AC3B094D /* LeerraumWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
-/* Begin PBXFileReference section */
-		8588664C2F4CF43B0088D308 /* Leerraum.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Leerraum.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		DCFECA2E0BF24208AC3B094D /* LeerraumWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = LeerraumWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
-/* End PBXFileReference section */
-
-/* Begin PBXFileSystemSynchronizedRootGroup section */
-		8588664E2F4CF43B0088D308 /* Leerraum */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = Leerraum;
-			sourceTree = "<group>";
+/* Begin PBXContainerItemProxy section */
+		1BA6F1F66B4A4534B1DE017A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 858866442F4CF43B0088D308 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AB5148A74EA7480F83D69C3F;
+			remoteInfo = LeerraumWidget;
 		};
-		5018348BA9EB4433B75AD5E9 /* LeerraumWidget */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = LeerraumWidget;
-			sourceTree = "<group>";
-		};
-/* End PBXFileSystemSynchronizedRootGroup section */
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
 		D690CBED65174654951A70A5 /* Embed App Extensions */ = {
@@ -42,15 +34,38 @@
 		};
 /* End PBXCopyFilesBuildPhase section */
 
+/* Begin PBXFileReference section */
+		8588664C2F4CF43B0088D308 /* Leerraum.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Leerraum.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		DCFECA2E0BF24208AC3B094D /* LeerraumWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = LeerraumWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		5018348BA9EB4433B75AD5E9 /* LeerraumWidget */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = LeerraumWidget;
+			sourceTree = "<group>";
+		};
+		8588664E2F4CF43B0088D308 /* Leerraum */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Leerraum;
+			sourceTree = "<group>";
+		};
+		8588664F2F4CF43B0088D308 /* Shared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Shared;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
 /* Begin PBXFrameworksBuildPhase section */
-		858866492F4CF43B0088D308 /* Frameworks */ = {
+		70E252D22E5C41DE95BF4F85 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		70E252D22E5C41DE95BF4F85 /* Frameworks */ = {
+		858866492F4CF43B0088D308 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -64,6 +79,7 @@
 			isa = PBXGroup;
 			children = (
 				8588664E2F4CF43B0088D308 /* Leerraum */,
+				8588664F2F4CF43B0088D308 /* Shared */,
 				5018348BA9EB4433B75AD5E9 /* LeerraumWidget */,
 				8588664D2F4CF43B0088D308 /* Products */,
 			);
@@ -97,6 +113,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				8588664E2F4CF43B0088D308 /* Leerraum */,
+				8588664F2F4CF43B0088D308 /* Shared */,
 			);
 			name = Leerraum;
 			packageProductDependencies = (
@@ -119,6 +136,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				5018348BA9EB4433B75AD5E9 /* LeerraumWidget */,
+				8588664F2F4CF43B0088D308 /* Shared */,
 			);
 			name = LeerraumWidget;
 			packageProductDependencies = (
@@ -183,13 +201,6 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		858866482F4CF43B0088D308 /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 		5406370A727B4E0EB5C2016A /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -197,17 +208,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-/* End PBXSourcesBuildPhase section */
-
-/* Begin PBXContainerItemProxy section */
-		1BA6F1F66B4A4534B1DE017A /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = 858866442F4CF43B0088D308 /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = AB5148A74EA7480F83D69C3F;
-			remoteInfo = LeerraumWidget;
+		858866482F4CF43B0088D308 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
 		};
-/* End PBXContainerItemProxy section */
+/* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
 		9BA4D07CCF054C30BB67ED64 /* PBXTargetDependency */ = {
@@ -218,6 +226,36 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		1E598C1AB93D417FA37376C3 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = LeerraumWidget/LeerraumWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = D3734A3AQY;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "LeerraumWidget-Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = brangarciaramos.Leerraum.widget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = auto;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
 		858866552F4CF43C0088D308 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -339,6 +377,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Leerraum/Leerraum.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = D3734A3AQY;
@@ -347,6 +386,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Leerraum/DeepLinkInfo.plist;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -383,6 +423,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Leerraum/Leerraum.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = D3734A3AQY;
@@ -391,6 +432,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Leerraum/DeepLinkInfo.plist;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -422,43 +464,16 @@
 			};
 			name = Release;
 		};
-		1E598C1AB93D417FA37376C3 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				APPLICATION_EXTENSION_API_ONLY = YES;
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = D3734A3AQY;
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = LeerraumWidget-Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@executable_path/../../Frameworks",
-				);
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = brangarciaramos.Leerraum.widget;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = auto;
-				SKIP_INSTALL = YES;
-				STRING_CATALOG_GENERATE_SYMBOLS = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
-			};
-			name = Debug;
-		};
 		92CC4AD5038B4A93B948DF7B /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = LeerraumWidget/LeerraumWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = D3734A3AQY;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = LeerraumWidget-Info.plist;
+				INFOPLIST_FILE = "LeerraumWidget-Info.plist";
 				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -468,6 +483,7 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = brangarciaramos.Leerraum.widget;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
 				SDKROOT = auto;
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -481,6 +497,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		2DA3B32D4D6A440C88C96530 /* Build configuration list for PBXNativeTarget "LeerraumWidget" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1E598C1AB93D417FA37376C3 /* Debug */,
+				92CC4AD5038B4A93B948DF7B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		858866472F4CF43B0088D308 /* Build configuration list for PBXProject "Leerraum" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -495,15 +520,6 @@
 			buildConfigurations = (
 				858866582F4CF43C0088D308 /* Debug */,
 				858866592F4CF43C0088D308 /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
-		2DA3B32D4D6A440C88C96530 /* Build configuration list for PBXNativeTarget "LeerraumWidget" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				1E598C1AB93D417FA37376C3 /* Debug */,
-				92CC4AD5038B4A93B948DF7B /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

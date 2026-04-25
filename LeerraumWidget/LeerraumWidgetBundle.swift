@@ -5,5 +5,10 @@ import SwiftUI
 struct LeerraumWidgetBundle: WidgetBundle {
     var body: some Widget {
         LeerraumSummaryWidget()
+        LeerraumFoodWidget()
+        LeerraumMealsRoutineWidget()
+        LeerraumWaterRoutineWidget()
+        LeerraumQuoteWidget()
+        LeerraumLifeGoalWidget()
     }
 }
